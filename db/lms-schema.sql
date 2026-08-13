@@ -91,7 +91,16 @@ create table if not exists fixtures (
     (home_score is null or home_score >= 0) and (away_score is null or away_score >= 0)
   ),
 
-  -- A club plays at most once per matchday, on one side or the other.
+  -- A club appears at most once as home, and at most once as away, per matchday.
+  --
+  -- These two do NOT compose into "once per matchday overall": a club could be
+  -- home in one fixture and away in another on the same matchday. Enforcing
+  -- that structurally (a normalised fixture_teams relation, or a trigger) is
+  -- over-engineering for controlled reference data — fixtures are seeded once,
+  -- in bulk, from a verified source, not entered ad hoc. Phase 6 instead
+  -- asserts it AFTER loading: every team appears exactly once per matchday, or
+  -- the seed is rejected. Cheaper than a runtime trigger and catches a bad
+  -- source file, which is the actual risk.
   constraint fixtures_one_home_per_matchday unique (matchday, home_team_id),
   constraint fixtures_one_away_per_matchday unique (matchday, away_team_id)
 );
@@ -111,6 +120,15 @@ comment on column fixtures.status is
 -- different buy-in.
 --
 -- phone is PII — secret-key reads only (see the grants block at the bottom).
+--
+-- There is deliberately NO `paid` column here. Payment moved to `entries`
+-- because it is per-competition, not per-person: multi-entry means one person
+-- can hold several paid entries at once, and rollovers give the same person
+-- different buy-ins. A participants.paid flag cannot express either, so
+-- re-adding it for backwards compatibility would be the wrong direction.
+-- The Phase 2 admin entrants flow still reads it and is rebuilt against
+-- entries + competitions in Phase 5; until then its guarded empty state is
+-- the intended behaviour, not a regression.
 -- ----------------------------------------------------------------------------
 create table if not exists participants (
   id            uuid        primary key default gen_random_uuid(),
@@ -213,6 +231,11 @@ comment on column rounds.deadline is
 -- arrangement can be recorded truthfully. Expected values:
 --   returning player : 1000 (£10)
 --   newcomer         : 1000 x (competitions.rollover_count + 1)
+--
+-- No odd-pence allocation rule is needed: entries are whole-pound amounts
+-- (a multiple of 1000 pence), so the 50/50 pot/club split is always exact and
+-- no remainder penny can arise. If sub-pound amounts are ever accepted, a
+-- rounding rule must be defined at that point.
 -- ----------------------------------------------------------------------------
 create table if not exists entries (
   id                   uuid        primary key default gen_random_uuid(),
@@ -288,6 +311,88 @@ comment on column picks.auto_assigned is
   'True when the deadline passed with no pick and the engine assigned the first alphabetically-available team.';
 comment on column picks.outcome is
   'pending | survived | eliminated. Postponed/abandoned fixtures settle as survived.';
+
+
+-- ----------------------------------------------------------------------------
+-- Integrity: a 'won' competition must actually name a winner.
+--
+-- status = 'won' implies BOTH winner_participant_id is set AND that person
+-- holds an entry in this competition with status = 'winner'. Neither a CHECK
+-- (it must look at another table) nor an FK can express that.
+--
+-- DEFERRABLE INITIALLY DEFERRED — checked once at COMMIT, so a settlement
+-- transaction can mark the entries and the competition in either order and
+-- pass through legitimately inconsistent intermediate states.
+--
+-- It fires from BOTH sides: from competitions (marking 'won' without a
+-- winner), and from entries (stripping 'winner' off the entry, or deleting it,
+-- after the competition was settled). Scope is deliberately narrow — only the
+-- "won implies a consistent winner" invariant. Other statuses are unconstrained
+-- and no other entry is examined.
+-- ----------------------------------------------------------------------------
+create or replace function assert_won_competition_has_winner()
+returns trigger
+language plpgsql
+as $$
+declare
+  target_id uuid;
+  comp      competitions%rowtype;
+begin
+  if tg_table_name = 'competitions' then
+    target_id := new.id;                -- competitions fires on insert/update only
+  elsif tg_op = 'DELETE' then
+    target_id := old.competition_id;
+  else
+    target_id := new.competition_id;
+  end if;
+
+  select * into comp from competitions where id = target_id;
+
+  -- The competition itself is gone (e.g. deleted, cascading its entries).
+  if not found then
+    return null;
+  end if;
+
+  -- Only 'won' carries the invariant; 'active' and 'rolled_over' are free.
+  if comp.status <> 'won' then
+    return null;
+  end if;
+
+  if comp.winner_participant_id is null then
+    raise exception
+      'competition % is marked won but names no winner_participant_id', comp.id
+      using errcode = 'check_violation';
+  end if;
+
+  if not exists (
+    select 1 from entries e
+    where e.competition_id = comp.id
+      and e.participant_id = comp.winner_participant_id
+      and e.status = 'winner'
+  ) then
+    raise exception
+      'competition % is marked won but participant % holds no entry with status = winner',
+      comp.id, comp.winner_participant_id
+      using errcode = 'check_violation';
+  end if;
+
+  return null;
+end;
+$$;
+
+-- DROP + CREATE rather than IF NOT EXISTS: CREATE CONSTRAINT TRIGGER has no
+-- such clause, and this keeps the file re-runnable.
+drop trigger if exists competitions_won_integrity on competitions;
+create constraint trigger competitions_won_integrity
+  after insert or update on competitions
+  deferrable initially deferred
+  for each row execute function assert_won_competition_has_winner();
+
+drop trigger if exists entries_won_integrity on entries;
+create constraint trigger entries_won_integrity
+  after update or delete on entries
+  deferrable initially deferred
+  for each row execute function assert_won_competition_has_winner();
 
 
 -- ----------------------------------------------------------------------------
