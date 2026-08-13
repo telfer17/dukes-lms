@@ -1,6 +1,7 @@
 import { constantTimeEqual } from "@/lib/admin-auth";
 import {
   DEFAULT_GRACE_MS,
+  FEED_STATUS_FILTER,
   matchFeedToFixtures,
   type DueFixture,
   type FeedMatch,
@@ -43,18 +44,21 @@ function unauthorized() {
   return Response.json({ error: "Unauthorized" }, { status: 401 });
 }
 
-/** Header or query param, compared in constant time. */
+/**
+ * Header only, compared in constant time.
+ *
+ * Deliberately NOT accepted as a query parameter: URLs end up in access logs,
+ * proxy logs, browser history and Referer headers, so a ?secret= is a secret
+ * you have published. Vercel Cron sends `Authorization: Bearer $CRON_SECRET`,
+ * and x-cron-secret is there for hand-invocation.
+ */
 function isAuthorised(request: Request): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
 
   const header = request.headers.get("authorization") ?? "";
-  const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
-  const supplied =
-    bearer ||
-    request.headers.get("x-cron-secret") ||
-    new URL(request.url).searchParams.get("secret") ||
-    "";
+  const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  const supplied = bearer || request.headers.get("x-cron-secret") || "";
 
   return supplied.length > 0 && constantTimeEqual(supplied, secret);
 }
@@ -190,7 +194,7 @@ export async function GET(request: Request) {
   let feed: FeedMatch[];
   try {
     const response = await fetch(
-      `${API_HOST}/fixtures?league=${LEAGUE_ID}&season=${SEASON}&status=FT-AET-PEN`,
+      `${API_HOST}/fixtures?league=${LEAGUE_ID}&season=${SEASON}&status=${FEED_STATUS_FILTER}`,
       {
         headers: { "x-apisports-key": apiKey },
         cache: "no-store",

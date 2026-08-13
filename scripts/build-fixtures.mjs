@@ -273,17 +273,25 @@ on conflict (matchday, home_team_id) do nothing;
 
 -- Loud check: an unknown club name would be silently dropped by the joins
 -- above, so confirm the full card actually landed.
+--
+-- Scoped to THIS seed's kickoff window rather than counting the whole table,
+-- so a future season loaded alongside it neither masks a short load here nor
+-- trips the assertion itself.
 do $$
 declare
   n integer;
 begin
-  select count(*) into n from fixtures;
+  select count(*) into n
+  from fixtures
+  where kickoff >= timestamptz '${payload.fixtures[0].kickoff}'
+    and kickoff <= timestamptz '${payload.fixtures.at(-1).kickoff}';
+
   if n <> ${payload.counts.fixtures} then
     raise exception
-      'expected ${payload.counts.fixtures} fixtures after seeding, found % — check every club name in teams matches the seed',
+      'expected ${payload.counts.fixtures} fixtures in the ${SEASON} window, found % — check every club name in teams matches the seed',
       n;
   end if;
-  raise notice 'fixtures seeded: % rows', n;
+  raise notice '${SEASON} fixtures seeded: % rows', n;
 end $$;
 `;
 

@@ -419,15 +419,23 @@ on conflict (matchday, home_team_id) do nothing;
 
 -- Loud check: an unknown club name would be silently dropped by the joins
 -- above, so confirm the full card actually landed.
+--
+-- Scoped to THIS seed's kickoff window rather than counting the whole table,
+-- so a future season loaded alongside it neither masks a short load here nor
+-- trips the assertion itself.
 do $$
 declare
   n integer;
 begin
-  select count(*) into n from fixtures;
+  select count(*) into n
+  from fixtures
+  where kickoff >= timestamptz '2026-08-21T19:00:00.000Z'
+    and kickoff <= timestamptz '2027-05-30T12:00:00.000Z';
+
   if n <> 380 then
     raise exception
-      'expected 380 fixtures after seeding, found % — check every club name in teams matches the seed',
+      'expected 380 fixtures in the 2026-27 window, found % — check every club name in teams matches the seed',
       n;
   end if;
-  raise notice 'fixtures seeded: % rows', n;
+  raise notice '2026-27 fixtures seeded: % rows', n;
 end $$;

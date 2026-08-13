@@ -2,6 +2,7 @@
 // JSON. Pure — no network, no database. If someone regenerates the fixture
 // data badly, CI catches it here rather than after it has been seeded.
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import fixtureData from "@/data/fixtures-2026-27.json";
 import { CANONICAL_TEAMS } from "@/lib/team-names";
@@ -11,6 +12,27 @@ const { fixtures, counts, source } = fixtureData;
 const matchdays = [...new Set(fixtures.map((f) => f.matchday))].sort(
   (a, b) => a - b
 );
+
+// What the clock in London actually read at a given UTC instant.
+const londonFormat = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Europe/London",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+function londonLabel(iso: string): string {
+  const p = Object.fromEntries(
+    londonFormat
+      .formatToParts(new Date(iso))
+      .filter((x) => x.type !== "literal")
+      .map((x) => [x.type, x.value])
+  );
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+}
 
 describe("fixture data provenance", () => {
   it("records where it came from and when", () => {
@@ -23,6 +45,19 @@ describe("fixture data provenance", () => {
     expect(counts.fixtures).toBe(fixtures.length);
     expect(counts.matchdays).toBe(matchdays.length);
     expect(counts.teams).toBe(CANONICAL_TEAMS.length);
+  });
+});
+
+describe("generator and app agree on the club list", () => {
+  // The generator is a plain .mjs script and cannot import the TS module, so
+  // it keeps its own copy of the 20 names. Assert the two lists are identical
+  // rather than relying on drift happening to show up in the fixture data.
+  it("scripts/build-fixtures.mjs uses exactly CANONICAL_TEAMS", () => {
+    const src = readFileSync("scripts/build-fixtures.mjs", "utf8");
+    const block = src.match(/const CANONICAL = \[([\s\S]*?)\];/);
+    expect(block, "CANONICAL block not found — has the script been restructured?").toBeTruthy();
+    const names = [...block![1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect(names.sort()).toEqual([...CANONICAL_TEAMS].sort());
   });
 });
 
@@ -134,35 +169,47 @@ describe("kickoff times", () => {
     expect(first.kickoff_uk).toBe("2026-08-21 20:00");
   });
 
-  it("converts BST and GMT kickoffs differently — the season spans both", () => {
-    // UK wall clock minus stored UTC: 1h during BST, 0h during GMT.
-    const offsetHours = (f: (typeof fixtures)[number]) =>
-      (Date.parse(`${f.kickoff_uk.replace(" ", "T")}:00Z`) -
-        Date.parse(f.kickoff)) /
-      3_600_000;
-
-    const august = fixtures.filter((f) => f.kickoff_uk.startsWith("2026-08"));
-    const december = fixtures.filter((f) => f.kickoff_uk.startsWith("2026-12"));
-    const may = fixtures.filter((f) => f.kickoff_uk.startsWith("2027-05"));
-
-    expect(august.length).toBeGreaterThan(0);
-    expect(december.length).toBeGreaterThan(0);
-    expect(may.length).toBeGreaterThan(0);
-
-    expect(august.every((f) => offsetHours(f) === 1)).toBe(true); // BST
-    expect(december.every((f) => offsetHours(f) === 0)).toBe(true); // GMT
-    expect(may.every((f) => offsetHours(f) === 1)).toBe(true); // BST again
+  it("renders every kickoff back to exactly its stated UK wall clock", () => {
+    // The real check: take the stored UTC instant, ask Europe/London what the
+    // clock said at that moment, and require it to equal kickoff_uk exactly.
+    // An hour wrong anywhere — including the October and March boundaries,
+    // where a fixed offset would silently disagree — fails here.
+    const mismatched = fixtures
+      .map((f) => ({ f, actual: londonLabel(f.kickoff) }))
+      .filter(({ f, actual }) => actual !== f.kickoff_uk)
+      .map(({ f, actual }) => `${f.home} v ${f.away}: ${f.kickoff} -> ${actual}, labelled ${f.kickoff_uk}`);
+    expect(mismatched).toEqual([]);
   });
 
-  it("puts every fixture's UK label and UTC instant in agreement", () => {
-    const mismatched = fixtures.filter((f) => {
-      const offset =
-        (Date.parse(`${f.kickoff_uk.replace(" ", "T")}:00Z`) -
-          Date.parse(f.kickoff)) /
-        3_600_000;
-      return offset !== 0 && offset !== 1;
-    });
-    expect(mismatched).toEqual([]);
+  it("really does span BST, GMT and BST again", () => {
+    // Guards against the season data being quietly replaced by something that
+    // never crosses a boundary, which would make the check above vacuous.
+    const offsets = new Set(
+      fixtures.map(
+        (f) =>
+          (Date.parse(`${f.kickoff_uk.replace(" ", "T")}:00Z`) -
+            Date.parse(f.kickoff)) /
+          3_600_000
+      )
+    );
+    expect([...offsets].sort()).toEqual([0, 1]);
+
+    const monthOffset = (prefix: string) =>
+      new Set(
+        fixtures
+          .filter((f) => f.kickoff_uk.startsWith(prefix))
+          .map(
+            (f) =>
+              (Date.parse(`${f.kickoff_uk.replace(" ", "T")}:00Z`) -
+                Date.parse(f.kickoff)) /
+              3_600_000
+          )
+      );
+    expect([...monthOffset("2026-08")]).toEqual([1]); // BST
+    expect([...monthOffset("2026-12")]).toEqual([0]); // GMT
+    expect([...monthOffset("2027-05")]).toEqual([1]); // BST again
+    // October straddles the change, so it must contain both.
+    expect([...monthOffset("2026-10")].sort()).toEqual([0, 1]);
   });
 });
 

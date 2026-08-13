@@ -1,6 +1,6 @@
 // Pure logic for the auto-results cron: which of our fixtures are due a
 // result, and what a feed payload means for them. No I/O — the route does the
-// fetching and writing, this decides. Unit-tested in tests/results-feed.ts.
+// fetching and writing, this decides. Unit-tested in tests/results-feed.test.ts.
 
 import { resolveTeamName, type CanonicalTeam } from "@/lib/team-names";
 
@@ -32,16 +32,30 @@ export type FixtureUpdate = {
 };
 
 /** Statuses that mean the 90 minutes are over and the score is final. */
-const FINISHED = new Set(["FT", "AET", "PEN"]);
+const FINISHED = ["FT", "AET", "PEN"] as const;
 /** Statuses that mean the match did not produce a result. */
-const ABANDONED = new Set(["PST", "CANC", "ABD", "SUSP", "AWD", "WO", "INT"]);
+const ABANDONED = ["PST", "CANC", "ABD", "SUSP", "AWD", "WO", "INT"] as const;
+
+const FINISHED_SET = new Set<string>(FINISHED);
+const ABANDONED_SET = new Set<string>(ABANDONED);
+
+/**
+ * The `status` filter to send to API-Football, derived from the two sets above
+ * so it cannot drift from what we know how to handle.
+ *
+ * Called-off statuses MUST be requested: without them the feed only returns
+ * finished matches, a postponement simply never arrives, and the fixture looks
+ * merely "not reported yet" forever — leaving the abandoned branch unreachable
+ * against the real feed.
+ */
+export const FEED_STATUS_FILTER = [...FINISHED, ...ABANDONED].join("-");
 
 export function isFinished(statusShort: string): boolean {
-  return FINISHED.has(statusShort.toUpperCase());
+  return FINISHED_SET.has(statusShort.toUpperCase());
 }
 
 export function isAbandoned(statusShort: string): boolean {
-  return ABANDONED.has(statusShort.toUpperCase());
+  return ABANDONED_SET.has(statusShort.toUpperCase());
 }
 
 /**

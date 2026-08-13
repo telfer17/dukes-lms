@@ -77,6 +77,14 @@ describe("resolveTeamName", () => {
     }
   });
 
+  it("does not resolve inherited object keys as aliases", () => {
+    // A plain object literal would answer for "constructor" and friends.
+    for (const key of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+      expect(resolveTeamName(key)).toBeNull();
+      expect(API_FOOTBALL_ALIASES[key]).toBeUndefined();
+    }
+  });
+
   it("returns null for junk", () => {
     expect(resolveTeamName("")).toBeNull();
     expect(resolveTeamName("Not A Club")).toBeNull();

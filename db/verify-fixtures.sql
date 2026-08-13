@@ -59,8 +59,11 @@ bad_home_away as (
     t.name,
     count(*) filter (where f.home_team_id = t.id) as home_games,
     count(*) filter (where f.away_team_id = t.id) as away_games
+  -- LEFT JOIN on purpose: an INNER JOIN drops a club with NO fixtures at all,
+  -- which is exactly the case this check exists to catch (it would report
+  -- 0H/0A, not silently pass).
   from teams t
-  join fixtures f on f.home_team_id = t.id or f.away_team_id = t.id
+  left join fixtures f on f.home_team_id = t.id or f.away_team_id = t.id
   group by t.name
   having count(*) filter (where f.home_team_id = t.id) <> 19
       or count(*) filter (where f.away_team_id = t.id) <> 19

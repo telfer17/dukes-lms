@@ -53,7 +53,12 @@ export function stripClubTag(raw: string): string {
  * stripClubTag need to be here — the rest resolve on their own, and a name we
  * have never seen is reported rather than aliased to a guess.
  */
-export const API_FOOTBALL_ALIASES: Record<string, CanonicalTeam> = {
+// Null prototype: a plain object literal inherits `constructor`, `toString`
+// and friends, so a feed name of "constructor" would look up as a truthy
+// non-string. The CANONICAL_SET check below already rejects those, but a table
+// of aliases should not answer for keys nobody put in it.
+export const API_FOOTBALL_ALIASES: Record<string, CanonicalTeam> =
+  Object.assign(Object.create(null) as Record<string, CanonicalTeam>, {
   // Short forms. Each is an unambiguous shortening of one of OUR clubs —
   // nothing here is a judgement call, and a club we do not have must NEVER be
   // aliased onto one we do (that would post a result against the wrong team
@@ -72,7 +77,7 @@ export const API_FOOTBALL_ALIASES: Record<string, CanonicalTeam> = {
   "Nott'm Forest": "Nottingham Forest",
   Spurs: "Tottenham Hotspur",
   Tottenham: "Tottenham Hotspur",
-};
+});
 
 /**
  * Resolve one feed name to a canonical club, or null if we cannot.
