@@ -96,7 +96,9 @@ export async function setFixtureResult(
  *   4. resolve the end state and apply it.
  *
  * NOT a database transaction — supabase-js has no multi-statement transaction,
- * and a Postgres function is deferred to the pre-season hardening pass. Until
+ * and a Postgres function is deferred to the pre-season hardening pass. When
+ * that RPC is written it must also take the results cron's guard inside it
+ * (app/api/cron/results/route.ts), or the lock will only be half a lock. Until
  * then the writes are ordered so every intermediate state is valid and every
  * step is idempotent: entries become 'winner' BEFORE the competition is marked
  * won (the deferred won-integrity trigger requires it), the round is flagged
