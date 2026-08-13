@@ -129,6 +129,11 @@ describe("settlePick", () => {
     expect(settlePick(idOf("Arsenal"), f)).toBe("pending");
   });
 
+  it("is pending when marked played but the result has not been entered", () => {
+    const f = fixture("Arsenal", "Chelsea", { status: "played", result: null });
+    expect(settlePick(idOf("Arsenal"), f)).toBe("pending");
+  });
+
   it("is pending when the team has no fixture at all", () => {
     expect(settlePick(idOf("Arsenal"), undefined)).toBe("pending");
   });
@@ -140,18 +145,51 @@ describe("fixture helpers", () => {
       fixture("Arsenal", "Chelsea"),
       fixture("Everton", "Fulham"),
     ];
-    expect(fixtureForTeam(fixtures, idOf("Chelsea"))?.home_team_id).toBe(
+    expect(fixtureForTeam(fixtures, idOf("Chelsea"), 1)?.home_team_id).toBe(
       idOf("Arsenal")
     );
-    expect(fixtureForTeam(fixtures, idOf("Everton"))?.away_team_id).toBe(
+    expect(fixtureForTeam(fixtures, idOf("Everton"), 1)?.away_team_id).toBe(
       idOf("Fulham")
     );
   });
 
   it("returns undefined for a team not playing", () => {
     expect(
-      fixtureForTeam([fixture("Arsenal", "Chelsea")], idOf("Liverpool"))
+      fixtureForTeam([fixture("Arsenal", "Chelsea")], idOf("Liverpool"), 1)
     ).toBeUndefined();
+  });
+
+  it("selects the fixture for the REQUESTED matchday, not the first team match", () => {
+    // Arsenal play in both. Season-wide fixture lists are the norm, so matching
+    // on team alone would return matchday 1's game when asked for matchday 2.
+    const fixtures = [
+      fixture("Arsenal", "Chelsea", { matchday: 1 }),
+      fixture("Everton", "Arsenal", { matchday: 2 }),
+    ];
+    expect(fixtureForTeam(fixtures, idOf("Arsenal"), 1)?.matchday).toBe(1);
+    expect(fixtureForTeam(fixtures, idOf("Arsenal"), 1)?.away_team_id).toBe(
+      idOf("Chelsea")
+    );
+    expect(fixtureForTeam(fixtures, idOf("Arsenal"), 2)?.matchday).toBe(2);
+    expect(fixtureForTeam(fixtures, idOf("Arsenal"), 2)?.home_team_id).toBe(
+      idOf("Everton")
+    );
+  });
+
+  it("returns undefined when the team plays, but not on that matchday", () => {
+    const fixtures = [fixture("Arsenal", "Chelsea", { matchday: 1 })];
+    expect(fixtureForTeam(fixtures, idOf("Arsenal"), 2)).toBeUndefined();
+  });
+
+  it("teamsPlayingIn counts only the requested matchday", () => {
+    const fixtures = [
+      fixture("Arsenal", "Chelsea", { matchday: 1 }),
+      fixture("Everton", "Fulham", { matchday: 2 }),
+    ];
+    const md1 = teamsPlayingIn(fixtures, 1);
+    expect(md1.has(idOf("Arsenal"))).toBe(true);
+    expect(md1.has(idOf("Everton"))).toBe(false);
+    expect(md1.size).toBe(2);
   });
 
   it("flags postponed and abandoned as unplayed, played and scheduled as not", () => {
@@ -162,10 +200,10 @@ describe("fixture helpers", () => {
   });
 
   it("collects both sides of every fixture as playing", () => {
-    const playing = teamsPlayingIn([
-      fixture("Arsenal", "Chelsea"),
-      fixture("Everton", "Fulham"),
-    ]);
+    const playing = teamsPlayingIn(
+      [fixture("Arsenal", "Chelsea"), fixture("Everton", "Fulham")],
+      1
+    );
     expect([...playing].sort((a, b) => a - b)).toEqual(
       [idOf("Arsenal"), idOf("Chelsea"), idOf("Everton"), idOf("Fulham")].sort(
         (a, b) => a - b
@@ -189,8 +227,10 @@ describe("availableTeams", () => {
     expect(available.map((t) => t.name)).not.toContain("Arsenal");
   });
 
-  it("counts a team used in a POSTPONED game as used", () => {
-    // The pick row exists, so the team is spent regardless of the outcome.
+  it("counts a team as used from the pick history alone, whatever the outcome", () => {
+    // availableTeams reads history, never outcomes — which is exactly why a
+    // team picked in a postponed game stays spent. (The postponed -> survived
+    // path itself is covered in the settlePick and settleRound suites.)
     const available = availableTeams([idOf("Chelsea")], TEAMS);
     expect(available.map((t) => t.name)).not.toContain("Chelsea");
   });
@@ -247,25 +287,56 @@ describe("autoAssignTeam", () => {
       fixture("Chelsea", "Bournemouth"),
       fixture("Everton", "Fulham"),
     ];
-    expect(autoAssignTeam([], TEAMS, fixtures)?.name).toBe("Bournemouth");
+    expect(autoAssignTeam([], TEAMS, fixtures, 1)?.name).toBe("Bournemouth");
   });
 
   it("sorts by NAME, not by the order teams arrive in", () => {
     // Manchester United sits before Arsenal in TEAMS, and Tottenham before
     // Aston Villa. Anything relying on input order picks the wrong team here.
     expect(
-      autoAssignTeam([], TEAMS, [fixture("Manchester United", "Arsenal")])?.name
+      autoAssignTeam([], TEAMS, [fixture("Manchester United", "Arsenal")], 1)?.name
     ).toBe("Arsenal");
     expect(
-      autoAssignTeam([], TEAMS, [fixture("Tottenham Hotspur", "Aston Villa")])
+      autoAssignTeam([], TEAMS, [fixture("Tottenham Hotspur", "Aston Villa")], 1)
         ?.name
     ).toBe("Aston Villa");
     expect(
       autoAssignTeam([], TEAMS, [
         fixture("Manchester United", "Liverpool"),
         fixture("Newcastle United", "Brentford"),
-      ])?.name
+      ], 1)?.name
     ).toBe("Brentford");
+  });
+
+  it("only considers teams playing THIS matchday when a season is passed in", () => {
+    // Bournemouth is alphabetically first overall but plays matchday 2.
+    const fixtures = [
+      fixture("Everton", "Fulham", { matchday: 1 }),
+      fixture("Chelsea", "Bournemouth", { matchday: 2 }),
+    ];
+    expect(autoAssignTeam([], TEAMS, fixtures, 1)?.name).toBe("Everton");
+    expect(autoAssignTeam([], TEAMS, fixtures, 2)?.name).toBe("Bournemouth");
+  });
+
+  it("breaks a name tie deterministically on team id", () => {
+    // Names equal under sensitivity "base" — the lower id must win regardless
+    // of the order they arrive in.
+    const tied: Team[] = [
+      { id: 9, name: "Ryhope Colliery" },
+      { id: 4, name: "ryhope colliery" },
+    ];
+    const md = [
+      {
+        id: 1,
+        matchday: 1,
+        home_team_id: 9,
+        away_team_id: 4,
+        status: "scheduled" as const,
+        result: null,
+      },
+    ];
+    expect(autoAssignTeam([], tied, md, 1)?.id).toBe(4);
+    expect(autoAssignTeam([], [...tied].reverse(), md, 1)?.id).toBe(4);
   });
 
   it("skips teams the entry has already used", () => {
@@ -275,7 +346,7 @@ describe("autoAssignTeam", () => {
     ];
     // Bournemouth used → next alphabetical playing team is Chelsea.
     expect(
-      autoAssignTeam([idOf("Bournemouth")], TEAMS, fixtures)?.name
+      autoAssignTeam([idOf("Bournemouth")], TEAMS, fixtures, 1)?.name
     ).toBe("Chelsea");
   });
 
@@ -289,7 +360,7 @@ describe("autoAssignTeam", () => {
         [idOf("Bournemouth"), idOf("Chelsea"), idOf("Everton")],
         TEAMS,
         fixtures
-      )?.name
+      , 1)?.name
     ).toBe("Fulham");
   });
 
@@ -298,11 +369,12 @@ describe("autoAssignTeam", () => {
       fixture("Chelsea", "Bournemouth"),
       fixture("Everton", "Fulham"),
     ];
-    const entryA = autoAssignTeam([], TEAMS, fixtures);
+    const entryA = autoAssignTeam([], TEAMS, fixtures, 1);
     const entryB = autoAssignTeam(
       [idOf("Bournemouth"), idOf("Chelsea")],
       TEAMS,
-      fixtures
+      fixtures,
+      1
     );
     expect(entryA?.name).toBe("Bournemouth");
     expect(entryB?.name).toBe("Everton");
@@ -312,18 +384,18 @@ describe("autoAssignTeam", () => {
   it("uses the post-reset pool, so a used team is assignable again after 20", () => {
     const fixtures = [fixture("Chelsea", "Bournemouth")];
     const fullCycle = TEAMS.map((t) => t.id);
-    expect(autoAssignTeam(fullCycle, TEAMS, fixtures)?.name).toBe("Bournemouth");
+    expect(autoAssignTeam(fullCycle, TEAMS, fixtures, 1)?.name).toBe("Bournemouth");
   });
 
   it("returns null when every playing team is already used", () => {
     const fixtures = [fixture("Chelsea", "Bournemouth")];
     expect(
-      autoAssignTeam([idOf("Chelsea"), idOf("Bournemouth")], TEAMS, fixtures)
+      autoAssignTeam([idOf("Chelsea"), idOf("Bournemouth")], TEAMS, fixtures, 1)
     ).toBeNull();
   });
 
   it("returns null when there are no fixtures at all", () => {
-    expect(autoAssignTeam([], TEAMS, [])).toBeNull();
+    expect(autoAssignTeam([], TEAMS, [], 1)).toBeNull();
   });
 });
 
@@ -344,7 +416,7 @@ describe("settleRound", () => {
       pick("e3", "Everton"), // drew
     ];
 
-    const settled = settleRound(entries, picks, fixtures);
+    const settled = settleRound(entries, picks, fixtures, 1);
     const status = (id: string) =>
       settled.entries.find((e) => e.id === id)?.status;
 
@@ -363,7 +435,7 @@ describe("settleRound", () => {
     const fixtures = [
       fixture("Arsenal", "Chelsea", { status: "postponed", result: null }),
     ];
-    const settled = settleRound(entries, [pick("e1", "Arsenal")], fixtures);
+    const settled = settleRound(entries, [pick("e1", "Arsenal")], fixtures, 1);
 
     expect(settled.entries[0].status).toBe("active");
     expect(settled.outcomes[0].outcome).toBe("survived");
@@ -373,14 +445,14 @@ describe("settleRound", () => {
   it("does not flag a normal win as survived-via-unplayed", () => {
     const entries = [entry("e1", "p1")];
     const fixtures = [fixture("Arsenal", "Chelsea", { result: "home" })];
-    const settled = settleRound(entries, [pick("e1", "Arsenal")], fixtures);
+    const settled = settleRound(entries, [pick("e1", "Arsenal")], fixtures, 1);
     expect(settled.survivedViaUnplayed.size).toBe(0);
   });
 
   it("leaves already-eliminated entries untouched", () => {
     const entries = [entry("e1", "p1", "eliminated"), entry("e2", "p2")];
     const fixtures = [fixture("Arsenal", "Chelsea", { result: "home" })];
-    const settled = settleRound(entries, [pick("e2", "Arsenal")], fixtures);
+    const settled = settleRound(entries, [pick("e2", "Arsenal")], fixtures, 1);
 
     expect(settled.entries[0].status).toBe("eliminated");
     expect(settled.outcomes).toHaveLength(1);
@@ -392,7 +464,7 @@ describe("settleRound", () => {
     const fixtures = [
       fixture("Arsenal", "Chelsea", { status: "scheduled", result: null }),
     ];
-    const settled = settleRound(entries, [pick("e1", "Arsenal")], fixtures);
+    const settled = settleRound(entries, [pick("e1", "Arsenal")], fixtures, 1);
 
     expect(settled.entries[0].status).toBe("active");
     expect(settled.unsettled).toEqual(["e1"]);
@@ -400,17 +472,38 @@ describe("settleRound", () => {
 
   it("never eliminates an active entry that has no pick at all", () => {
     const entries = [entry("e1", "p1")];
-    const settled = settleRound(entries, [], [
-      fixture("Arsenal", "Chelsea", { result: "home" }),
-    ]);
+    const settled = settleRound(
+      entries,
+      [],
+      [fixture("Arsenal", "Chelsea", { result: "home" })],
+      1
+    );
     expect(settled.entries[0].status).toBe("active");
     expect(settled.unsettled).toEqual(["e1"]);
+  });
+
+  it("settles against the requested matchday only", () => {
+    const entries = [entry("e1", "p1")];
+    // Arsenal LOSE on matchday 1 and WIN on matchday 2. Settling matchday 2
+    // must not reach back and eliminate them on matchday 1's result.
+    const fixtures = [
+      fixture("Arsenal", "Chelsea", { matchday: 1, result: "away" }),
+      fixture("Everton", "Arsenal", { matchday: 2, result: "away" }),
+    ];
+    expect(
+      settleRound(entries, [pick("e1", "Arsenal")], fixtures, 2).entries[0]
+        .status
+    ).toBe("active");
+    expect(
+      settleRound(entries, [pick("e1", "Arsenal")], fixtures, 1).entries[0]
+        .status
+    ).toBe("eliminated");
   });
 
   it("does not mutate the entries it was given", () => {
     const entries = [entry("e1", "p1")];
     const fixtures = [fixture("Arsenal", "Chelsea", { result: "away" })];
-    settleRound(entries, [pick("e1", "Arsenal")], fixtures);
+    settleRound(entries, [pick("e1", "Arsenal")], fixtures, 1);
     expect(entries[0].status).toBe("active");
   });
 });
@@ -542,7 +635,7 @@ describe("settle then resolve", () => {
       pick("e3", "Fulham"),
     ];
 
-    const settled = settleRound(entries, picks, fixtures);
+    const settled = settleRound(entries, picks, fixtures, 1);
     expect(resolveEndState(settled.entries)).toEqual({
       kind: "won",
       participant_id: "p1",
@@ -556,7 +649,8 @@ describe("settle then resolve", () => {
     const settled = settleRound(
       entries,
       [pick("e1", "Arsenal"), pick("e2", "Chelsea")],
-      fixtures
+      fixtures,
+      1
     );
     expect(resolveEndState(settled.entries)).toEqual({ kind: "rollover" });
   });
@@ -574,7 +668,7 @@ describe("settle then resolve", () => {
       pick("e3", "Liverpool"), // drew → out
     ];
 
-    const settled = settleRound(entries, picks, fixtures);
+    const settled = settleRound(entries, picks, fixtures, 1);
     const end = resolveEndState(settled.entries);
 
     expect(end).toEqual({

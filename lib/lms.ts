@@ -45,13 +45,25 @@ export type PickRecord = {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/** The fixture a team plays in, or undefined if they aren't playing this round. */
+/**
+ * The fixture a team plays in ON THAT MATCHDAY, or undefined if they aren't
+ * playing it.
+ *
+ * The matchday is required, not assumed: `fixtures` may well be the whole
+ * season, and a team plays 38 times in it. Matching on team alone would return
+ * whichever fixture happened to come first — a silent, round-dependent wrong
+ * answer. The schema guarantees at most one fixture per team per matchday
+ * (fixtures_one_home_per_matchday / _one_away_per_matchday).
+ */
 export function fixtureForTeam(
   fixtures: Fixture[],
-  teamId: TeamId
+  teamId: TeamId,
+  matchday: number
 ): Fixture | undefined {
   return fixtures.find(
-    (f) => f.home_team_id === teamId || f.away_team_id === teamId
+    (f) =>
+      f.matchday === matchday &&
+      (f.home_team_id === teamId || f.away_team_id === teamId)
   );
 }
 
@@ -63,10 +75,20 @@ export function isUnplayed(fixture: Fixture): boolean {
   return fixture.status === "postponed" || fixture.status === "abandoned";
 }
 
-/** Every team with a fixture in this set — i.e. everyone who can be picked. */
-export function teamsPlayingIn(fixtures: Fixture[]): Set<TeamId> {
+/**
+ * Every team playing on that matchday — i.e. everyone who can be picked.
+ *
+ * Matchday-scoped for the same reason as fixtureForTeam: given a season of
+ * fixtures, an unscoped version would report all 20 teams as playing and
+ * auto-assign a team that isn't actually on this round's card.
+ */
+export function teamsPlayingIn(
+  fixtures: Fixture[],
+  matchday: number
+): Set<TeamId> {
   const playing = new Set<TeamId>();
   for (const f of fixtures) {
+    if (f.matchday !== matchday) continue;
     playing.add(f.home_team_id);
     playing.add(f.away_team_id);
   }
@@ -157,12 +179,19 @@ export function availableTeams(
 export function autoAssignTeam(
   pickHistory: TeamId[],
   allTeams: Team[],
-  fixtures: Fixture[]
+  fixtures: Fixture[],
+  matchday: number
 ): Team | null {
-  const playing = teamsPlayingIn(fixtures);
+  const playing = teamsPlayingIn(fixtures, matchday);
   const candidates = availableTeams(pickHistory, allTeams)
     .filter((team) => playing.has(team.id))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    // Explicit "en" so the answer can't drift with the server's default locale,
+    // and id as a tie-break so equal-comparing names still order deterministically.
+    .sort(
+      (a, b) =>
+        a.name.localeCompare(b.name, "en", { sensitivity: "base" }) ||
+        a.id - b.id
+    );
   return candidates[0] ?? null;
 }
 
@@ -194,11 +223,14 @@ export type RoundSettlement = {
  * untouched. An active entry with no pick at all is left active and reported in
  * `unsettled` — a missed pick is never an elimination; auto-assign should have
  * run at lock time.
+ *
+ * `fixtures` may span any range; only `matchday` is consulted.
  */
 export function settleRound(
   entries: EntryRecord[],
   picks: PickRecord[],
-  fixtures: Fixture[]
+  fixtures: Fixture[],
+  matchday: number
 ): RoundSettlement {
   const pickByEntry = new Map(picks.map((p) => [p.entry_id, p]));
   const outcomes: SettledOutcome[] = [];
@@ -214,7 +246,7 @@ export function settleRound(
       return entry;
     }
 
-    const fixture = fixtureForTeam(fixtures, pick.team_id);
+    const fixture = fixtureForTeam(fixtures, pick.team_id, matchday);
     const outcome = settlePick(pick.team_id, fixture);
     outcomes.push({
       entry_id: entry.id,
@@ -256,6 +288,14 @@ export type EndState =
  *
  * The winner is reported as a participant, matching
  * competitions.winner_participant_id — see docs/LMS-SCHEMA.md.
+ *
+ * DELIBERATELY does NOT read entries already persisted as status = 'winner' to
+ * short-circuit to a "already won" answer. This engine is pure and stateless:
+ * it derives the end state from the active field, it does not read back a
+ * settlement someone already wrote. "Has this competition been settled before?"
+ * is a database question, answered at the Phase 5 call site — folding it in
+ * here would mix engine logic with persisted state and make the function's
+ * result depend on write history rather than on the round it was handed.
  */
 export function resolveEndState(entries: EntryRecord[]): EndState {
   const active = entries.filter((e) => e.status === "active");
