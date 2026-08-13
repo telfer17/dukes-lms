@@ -1,102 +1,206 @@
 import Link from "next/link";
-import { resultsEnteredCount } from "@/lib/admin-results";
-import { supabaseServer } from "@/lib/supabase-server";
-import ResultRow from "@/components/admin/ResultRow";
+import ActionForm from "@/components/admin/ActionForm";
+import FixtureRow from "@/components/admin/FixtureRow";
+import {
+  currentRound,
+  getActiveCompetition,
+  getEntries,
+  getFixturesForMatchday,
+  getPicksForRound,
+  getRounds,
+  getTeams,
+  isRoundOpen,
+  type CompetitionRow,
+  type FixtureRow as FixtureRecord,
+  type PickRow,
+  type RoundRow,
+} from "@/lib/lms-db";
+import type { Team } from "@/lib/lms";
+import { settleCurrentRound } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-type Match = {
-  id: number;
-  grp: string;
-  home: string;
-  away: string;
-  kickoff: string;
-  home_score: number | null;
-  away_score: number | null;
-};
-
-const dateFormatter = new Intl.DateTimeFormat("en-GB", {
+const kickoffFormat = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Europe/London",
-  weekday: "long",
+  weekday: "short",
   day: "numeric",
-  month: "long",
-});
-
-const timeFormatter = new Intl.DateTimeFormat("en-GB", {
-  timeZone: "Europe/London",
+  month: "short",
   hour: "2-digit",
   minute: "2-digit",
   hour12: false,
 });
 
-// The Last Man Standing schema isn't built yet, so `matches` may not exist.
-// Degrade to an empty list rather than crashing the admin panel.
-async function loadMatches(): Promise<Match[]> {
-  try {
-    const { data, error } = await supabaseServer
-      .from("matches")
-      .select("id, grp, home, away, kickoff, home_score, away_score")
-      .returns<Match[]>();
-    if (error) throw new Error(error.message);
-    return data ?? [];
-  } catch (e) {
-    console.error("matches lookup failed:", e);
-    return [];
-  }
-}
-
 export default async function ResultsPage() {
-  const matches = (await loadMatches()).sort(
-    (a, b) =>
-      new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime() ||
-      a.id - b.id
-  );
+  let competition: CompetitionRow | null = null;
+  let rounds: RoundRow[] = [];
+  let round: RoundRow | null = null;
+  let fixtures: FixtureRecord[] = [];
+  let teams: Team[] = [];
+  let picks: PickRow[] = [];
+  let activeCount = 0;
+  let loadError: string | null = null;
 
-  // Group under date headers; insertion order is chronological.
-  const byDate = new Map<string, Match[]>();
-  for (const match of matches) {
-    const date = dateFormatter.format(new Date(match.kickoff));
-    const list = byDate.get(date) ?? [];
-    list.push(match);
-    byDate.set(date, list);
+  try {
+    competition = await getActiveCompetition();
+    if (competition) {
+      rounds = await getRounds(competition.id);
+      round = currentRound(rounds);
+      teams = await getTeams();
+      const entries = await getEntries(competition.id);
+      activeCount = entries.filter((e) => e.status === "active").length;
+      if (round) {
+        fixtures = await getFixturesForMatchday(round.matchday);
+        picks = await getPicksForRound(round.id);
+      }
+    }
+  } catch (e) {
+    console.error("results load failed:", e);
+    loadError = "Could not read results.";
   }
+
+  // Bail rather than render the settle button beside zeroed stats: "0 still
+  // in" next to a destructive action is the worst possible failure mode.
+  if (competition && loadError) {
+    return (
+      <main className="mx-auto max-w-2xl px-4 py-8">
+        <Link href="/admin" className="text-sm text-blue-600 hover:underline">
+          ← Back to dashboard
+        </Link>
+        <h1 className="mt-2 text-2xl font-bold tracking-tight">
+          Results &amp; settling
+        </h1>
+        <p
+          role="alert"
+          className="mt-8 rounded-md border border-red-200 bg-red-50 p-6 text-center text-sm text-red-700"
+        >
+          {loadError} Nothing is shown rather than risk settling against
+          incomplete data — reload to try again.
+        </p>
+      </main>
+    );
+  }
+
+  const teamName = new Map(teams.map((t) => [t.id, t.name]));
+  const pickCountByTeam = new Map<number, number>();
+  for (const p of picks) {
+    pickCountByTeam.set(p.team_id, (pickCountByTeam.get(p.team_id) ?? 0) + 1);
+  }
+
+  const withoutPick = activeCount - picks.length;
+  const stillOpen = round ? isRoundOpen(round) : false;
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-8">
       <Link href="/admin" className="text-sm text-blue-600 hover:underline">
         ← Back to dashboard
       </Link>
-      <h1 className="mt-2 text-2xl font-bold tracking-tight">Results</h1>
-      <p className="mt-1 text-sm text-gray-500">
-        {resultsEnteredCount(matches)}/{matches.length} results in
-      </p>
+      <h1 className="mt-2 text-2xl font-bold tracking-tight">
+        Results &amp; settling
+      </h1>
 
-      {matches.length === 0 && (
-        <p className="mt-8 rounded-md border border-gray-200 p-6 text-center text-gray-500">
-          No fixtures yet — this page will fill in once the Last Man Standing
-          schema is set up.
+      {loadError && (
+        <p className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {loadError}
         </p>
       )}
 
-      {[...byDate.entries()].map(([date, dayMatches]) => (
-        <section key={date} className="mt-8">
-          <h2 className="mb-2 text-lg font-semibold">{date}</h2>
-          <div className="divide-y divide-gray-200 rounded-md border border-gray-200">
-            {dayMatches.map((match) => (
-              <ResultRow
-                key={match.id}
-                matchId={match.id}
-                grp={match.grp}
-                home={match.home}
-                away={match.away}
-                time={timeFormatter.format(new Date(match.kickoff))}
-                initialHome={match.home_score === null ? "" : String(match.home_score)}
-                initialAway={match.away_score === null ? "" : String(match.away_score)}
-              />
+      {!competition ? (
+        <p className="mt-8 rounded-md border border-gray-200 p-6 text-center text-gray-500">
+          No active competition.{" "}
+          <Link href="/admin/competition" className="text-blue-600 hover:underline">
+            Create one →
+          </Link>
+        </p>
+      ) : !round ? (
+        <p className="mt-8 rounded-md border border-gray-200 p-6 text-center text-gray-500">
+          {rounds.length === 0
+            ? "No rounds generated yet."
+            : "Every round is settled."}
+        </p>
+      ) : (
+        <>
+          <p className="mt-1 text-sm text-gray-500">
+            {competition.label} · round {round.round_number} · matchday{" "}
+            {round.matchday}
+          </p>
+
+          <div className="mt-4 grid grid-cols-3 gap-3">
+            {[
+              { label: "Still in", value: String(activeCount) },
+              { label: "Picked", value: String(picks.length) },
+              { label: "No pick", value: String(Math.max(0, withoutPick)) },
+            ].map((stat) => (
+              <div
+                key={stat.label}
+                className="rounded-md border border-gray-200 p-3 text-center"
+              >
+                <div className="text-xl font-bold tabular-nums">
+                  {stat.value}
+                </div>
+                <div className="text-[10px] uppercase tracking-wide text-gray-500">
+                  {stat.label}
+                </div>
+              </div>
             ))}
           </div>
-        </section>
-      ))}
+
+          {fixtures.length === 0 ? (
+            <p className="mt-6 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+              No fixtures loaded for matchday {round.matchday} yet — results
+              can&apos;t be entered until they are (Phase 6).
+            </p>
+          ) : (
+            <>
+              <h2 className="mt-8 text-lg font-semibold">
+                Matchday {round.matchday}
+              </h2>
+              <div className="mt-2 divide-y divide-gray-200 rounded-md border border-gray-200">
+                {fixtures.map((f) => (
+                  <FixtureRow
+                    key={f.id}
+                    fixtureId={f.id}
+                    home={teamName.get(f.home_team_id) ?? `#${f.home_team_id}`}
+                    away={teamName.get(f.away_team_id) ?? `#${f.away_team_id}`}
+                    kickoff={kickoffFormat.format(new Date(f.kickoff))}
+                    initialStatus={f.status}
+                    initialResult={f.result}
+                    pickedBy={
+                      (pickCountByTeam.get(f.home_team_id) ?? 0) +
+                      (pickCountByTeam.get(f.away_team_id) ?? 0)
+                    }
+                  />
+                ))}
+              </div>
+
+              <section className="mt-8 rounded-md border border-gray-200 p-5">
+                <h2 className="font-semibold">Settle round {round.round_number}</h2>
+                <p className="mt-1 mb-4 text-sm text-gray-600">
+                  Auto-assigns a team to anyone who missed the deadline, settles
+                  every pick, then advances or ends the competition.
+                  {stillOpen && (
+                    <strong className="block text-amber-700">
+                      Heads up: this round is still open for picks.
+                    </strong>
+                  )}
+                  {withoutPick > 0 && (
+                    <span className="block">
+                      {withoutPick} active{" "}
+                      {withoutPick === 1 ? "entry has" : "entries have"} no pick
+                      and will be auto-assigned.
+                    </span>
+                  )}
+                </p>
+                <ActionForm
+                  action={settleCurrentRound}
+                  submitLabel="Settle round"
+                  pendingLabel="Settling…"
+                  confirm={`Settle round ${round.round_number}? This eliminates entries and can end the competition.`}
+                />
+              </section>
+            </>
+          )}
+        </>
+      )}
     </main>
   );
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 
 type Entry = { id: string; name: string };
 
@@ -80,10 +79,8 @@ export default function FindEntryForm() {
 
       {notFound && (
         <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          No entry found with that number.{" "}
-          <Link href="/enter" className="font-semibold underline">
-            Enter the competition
-          </Link>
+          No entry found with that number. Entries are added by your club
+          contact — have a word with them to get signed up.
         </p>
       )}
 
