@@ -18,6 +18,13 @@ re-deriving behaviour.
 - The 50/50 split applies to **every** payment, including larger newcomer
   buy-ins (see [Rollovers & re-entry](#rollovers--re-entry)).
 - The prize pot is the accumulated pot-half of all entries.
+- **Multiple entries are allowed.** A person may enter the same competition more
+  than once — e.g. "David Smith 1", "David Smith 2" — provided they pay a **full
+  entry fee for each entry**.
+- Each entry is **completely independent**: its own picks, its own used-team
+  history, and its own survival. Two entries belonging to the same person may
+  pick **different teams in the same round**, and one can go out while the other
+  survives.
 
 ## Rounds
 
@@ -36,6 +43,9 @@ re-deriving behaviour.
   **alphabetically** that the player has not already used *and* that is playing
   in that matchday. This is the agreed gentle handling — a missed pick is **not**
   automatic elimination.
+- Auto-assign applies **per entry**. Someone holding two entries who misses both
+  deadlines gets a team auto-assigned for each one, worked out separately from
+  that entry's own used-team history (so the two may well be different teams).
 
 ## Postponed / abandoned matches
 
@@ -50,8 +60,11 @@ re-deriving behaviour.
 
 ## End states
 
-- **One player left** → they are the Last Man Standing, win the entire pot, and
-  the competition ends.
+- **One entry left** → that entry is the Last Man Standing, wins the entire pot,
+  and the competition ends.
+- **Last entries all belong to the same person** → that person wins, and takes
+  the **single pot**. It is winner-takes-all: holding the last two entries does
+  not win two shares, and there are no split or runner-up places.
 - **Everyone eliminated in the same round** (no survivors) → the pot rolls over
   and a new competition begins (see Rollovers).
 
