@@ -147,7 +147,7 @@ select * from (
                                      '; ' order by matchday)
                    from overlapping_matchdays), '38 matchdays in sequence')
   union all
-  select 8, 'every fixture is scheduled with no result',
+  select 8, 'every fixture is scheduled with no result (seed-time only)',
          case when not exists (select 1 from not_pristine) then 'PASS' else 'FAIL' end,
          case when exists (select 1 from not_pristine)
               then (select format('%s fixture(s) already have status/result', count(*)) from not_pristine)

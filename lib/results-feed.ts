@@ -75,7 +75,12 @@ function pairKey(home: string, away: string): string {
 
 export type MatchOutcome = {
   updates: FixtureUpdate[];
-  /** Feed names we could not resolve — the run must refuse while non-empty. */
+  /**
+   * Every feed name we could not resolve. Always reported, so a divergence
+   * between our club list and the real league is visible even on a run that
+   * otherwise succeeded. Whether it is an ERROR is the caller's call — it only
+   * matters if one of our fixtures also went unaccounted for.
+   */
   unmapped: string[];
   /** Our fixtures with no finished match in the feed yet. */
   notReported: number[];
@@ -140,10 +145,5 @@ export function matchFeedToFixtures(
     });
   }
 
-  // Only report names that actually blocked something. A name we could not map
-  // is only our problem if it left one of our fixtures unreported.
-  const relevantUnmapped =
-    notReported.length > 0 ? [...unmapped].sort() : [];
-
-  return { updates, unmapped: relevantUnmapped, notReported, abandoned };
+  return { updates, unmapped: [...unmapped].sort(), notReported, abandoned };
 }

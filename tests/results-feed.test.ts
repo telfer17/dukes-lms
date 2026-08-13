@@ -150,15 +150,16 @@ describe("matchFeedToFixtures", () => {
     expect(out.notReported).toEqual([1]);
   });
 
-  it("ignores feed clubs we do not track when nothing of ours is missing", () => {
-    // The feed covers the whole league; other clubs are not our problem so
-    // long as every fixture we asked about got reported.
+  it("still fills our fixtures when the feed carries clubs we do not track", () => {
     const out = matchFeedToFixtures(
       [fixture(1, "Arsenal", "Chelsea")],
       [feedMatch("Arsenal", "Chelsea", 1, 0), feedMatch("Wolves", "Leicester", 2, 2)]
     );
     expect(out.updates).toHaveLength(1);
-    expect(out.unmapped).toEqual([]);
+    expect(out.notReported).toEqual([]);
+    // Surfaced for visibility — our club list diverging from the real league is
+    // worth seeing — but nothing of ours was blocked, so it is not an error.
+    expect(out.unmapped).toEqual(["Leicester", "Wolves"]);
   });
 
   it("reports unmapped names when one of OUR fixtures went unreported", () => {
@@ -197,5 +198,13 @@ describe("matchFeedToFixtures", () => {
       notReported: [],
       abandoned: [],
     });
+  });
+
+  it("lists each unresolvable name once, sorted", () => {
+    const out = matchFeedToFixtures(
+      [],
+      [feedMatch("Zed Town", "Aardvark FC XI", 1, 0), feedMatch("Zed Town", "Chelsea", 0, 0)]
+    );
+    expect(out.unmapped).toEqual(["Aardvark FC XI", "Zed Town"]);
   });
 });

@@ -30,6 +30,7 @@ type Report = {
   updated: { fixtureId: number; score: string; result: string }[];
   skipped: {
     alreadyResulted: number;
+    changedUnderneath: number;
     roundSettled: { fixtureId: number; round: number }[];
     notReportedYet: number;
     abandoned: { fixtureId: number; statusShort: string }[];
@@ -67,6 +68,7 @@ export async function GET(request: Request) {
     updated: [],
     skipped: {
       alreadyResulted: 0,
+      changedUnderneath: 0,
       roundSettled: [],
       notReportedYet: 0,
       abandoned: [],
@@ -125,7 +127,7 @@ export async function GET(request: Request) {
   report.checked = pristine.length;
 
   if (pristine.length === 0) {
-    return Response.json(report);
+    return Response.json(report, { status: report.ok ? 200 : 207 });
   }
 
   // ---- 2. respect the settled-round guard ----
@@ -179,7 +181,9 @@ export async function GET(request: Request) {
   }
 
   if (writable.length === 0) {
-    return Response.json(report);
+    // May carry a config error from the loop above — a monitor watching the
+    // status code must not read that as a clean run.
+    return Response.json(report, { status: report.ok ? 200 : 207 });
   }
 
   // ---- 3. one feed call for the whole season ----
@@ -252,8 +256,11 @@ export async function GET(request: Request) {
   report.skipped.abandoned = outcome.abandoned;
 
   for (const update of outcome.updates) {
-    // `result is null` in the filter makes the write itself a no-op if an
-    // admin entered this result between our read and now — manual wins.
+    // Manual entry always wins, so the write re-asserts both halves of what we
+    // read: still unresulted AND still scheduled. `result is null` alone is not
+    // enough — an admin who marks a game postponed leaves result null, and
+    // without the status check we would flip it back to played and hand a
+    // result to a pick the rules say should have SURVIVED.
     const { error, count } = await supabaseServer
       .from("fixtures")
       .update(
@@ -266,6 +273,7 @@ export async function GET(request: Request) {
         { count: "exact" }
       )
       .eq("id", update.fixtureId)
+      .eq("status", "scheduled")
       .is("result", null);
 
     if (error) {
@@ -274,7 +282,9 @@ export async function GET(request: Request) {
       continue;
     }
     if (count === 0) {
-      report.skipped.alreadyResulted += 1;
+      // Someone changed it underneath us — entered a result, or marked it
+      // postponed. Either way theirs stands.
+      report.skipped.changedUnderneath += 1;
       continue;
     }
     report.updated.push({
@@ -284,10 +294,12 @@ export async function GET(request: Request) {
     });
   }
 
-  if (outcome.unmapped.length > 0) {
+  if (outcome.unmapped.length > 0 && outcome.notReported.length > 0) {
+    // Names we could not resolve, AND fixtures of ours the feed never
+    // accounted for — very likely the same problem. Fail loudly.
     report.ok = false;
     report.errors.push(
-      `Unrecognised club names in the feed: ${outcome.unmapped.join(", ")}. No guess was made — add them to API_FOOTBALL_ALIASES.`
+      `Unrecognised club names in the feed: ${outcome.unmapped.join(", ")}. No guess was made — add them to API_FOOTBALL_ALIASES if they are ours.`
     );
   }
 
