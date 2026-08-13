@@ -2,33 +2,296 @@
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/admin-auth";
-import { validateResult } from "@/lib/admin-results";
+import {
+  autoAssignTeam,
+  isWinPendingUnplayedFixtures,
+  resolveEndState,
+  settleRound,
+  type EntryRecord,
+  type PickRecord,
+} from "@/lib/lms";
+import { potPence } from "@/lib/competition";
+import {
+  currentRound,
+  getActiveCompetition,
+  getEntries,
+  getFixturesForMatchday,
+  getPicksForCompetition,
+  getPicksForRound,
+  getRounds,
+  getTeams,
+  pickHistoryTeamIds,
+} from "@/lib/lms-db";
 import { supabaseServer } from "@/lib/supabase-server";
 
-export async function setResult(
-  matchId: number,
-  homeRaw: string,
-  awayRaw: string
+export type ActionState = { error: string } | { ok: string } | null;
+
+/**
+ * Record a fixture's outcome. Only status and result — Last Man Standing needs
+ * win/draw/loss, not the scoreline. The schema's CHECK enforces that a result
+ * only exists on a played game; we mirror that here for a clean message.
+ */
+export async function setFixtureResult(
+  fixtureId: number,
+  status: "scheduled" | "played" | "postponed" | "abandoned",
+  result: "home" | "away" | "draw" | null
 ): Promise<void> {
   await requireAdmin();
 
-  if (!Number.isInteger(matchId)) {
-    throw new Error("Invalid match id.");
+  if (status !== "played" && result !== null) {
+    throw new Error("Only a played fixture can have a result.");
   }
-  const result = validateResult(homeRaw, awayRaw);
-  if (!result.ok) {
-    throw new Error(result.error);
+  if (status === "played" && result === null) {
+    throw new Error("A played fixture needs a result.");
   }
 
   const { error } = await supabaseServer
-    .from("matches")
-    .update({ home_score: result.home, away_score: result.away })
-    .eq("id", matchId);
+    .from("fixtures")
+    .update({ status, result })
+    .eq("id", fixtureId);
 
   if (error) {
-    console.error("setResult failed:", error);
-    throw new Error("Failed to save result.");
+    console.error("setFixtureResult failed:", error);
+    throw new Error("Failed to save the result.");
+  }
+  revalidatePath("/admin/results");
+}
+
+/**
+ * Settle the current round.
+ *
+ * Order of work:
+ *   1. auto-assign a team to every active entry with no pick (engine picks the
+ *      first alphabetically available team that's playing). If the engine has
+ *      nothing to give, HALT — that's an organiser decision, not a guess.
+ *   2. settle every pick through the engine.
+ *   3. write pick outcomes and entry statuses.
+ *   4. resolve the end state and apply it.
+ *
+ * NOT a database transaction — supabase-js has no multi-statement transaction.
+ * Writes are ordered so every intermediate state satisfies the schema's
+ * deferred won-integrity trigger: entries become 'winner' BEFORE the
+ * competition is marked won. Re-settling is refused up front, so a partial
+ * failure can be re-run rather than double-applied.
+ */
+export async function settleCurrentRound(): Promise<ActionState> {
+  await requireAdmin();
+
+  const competition = await getActiveCompetition();
+  if (!competition) return { error: "No active competition." };
+
+  const rounds = await getRounds(competition.id);
+  const round = currentRound(rounds);
+  if (!round) return { error: "No unsettled round left." };
+
+  // Idempotency guard — settling twice must never double-apply.
+  if (round.status === "settled") {
+    return { error: `Round ${round.round_number} is already settled.` };
+  }
+
+  const fixtures = await getFixturesForMatchday(round.matchday);
+  if (fixtures.length === 0) {
+    return { error: `No fixtures loaded for matchday ${round.matchday}.` };
+  }
+
+  const teams = await getTeams();
+  const entries = await getEntries(competition.id);
+  const activeEntries = entries.filter((e) => e.status === "active");
+  if (activeEntries.length === 0) {
+    return { error: "No active entries to settle." };
+  }
+
+  // ---- 1. auto-assign for anyone who missed the deadline ----
+  const roundNumberById = new Map(rounds.map((r) => [r.id, r.round_number]));
+  const allPicks = await getPicksForCompetition(competition.id);
+  const picksThisRound = allPicks.filter((p) => p.round_id === round.id);
+  const pickedEntryIds = new Set(picksThisRound.map((p) => p.entry_id));
+
+  const missing = activeEntries.filter((e) => !pickedEntryIds.has(e.id));
+  const autoRows: {
+    competition_id: string;
+    entry_id: string;
+    round_id: string;
+    team_id: number;
+    auto_assigned: boolean;
+    outcome: "pending";
+  }[] = [];
+  const stuck: string[] = [];
+
+  for (const entry of missing) {
+    const history = pickHistoryTeamIds(
+      allPicks.filter((p) => p.entry_id === entry.id),
+      roundNumberById
+    );
+    const team = autoAssignTeam(history, teams, fixtures, round.matchday);
+    if (!team) {
+      stuck.push(entry.participant?.name ?? entry.id);
+      continue;
+    }
+    autoRows.push({
+      competition_id: competition.id,
+      entry_id: entry.id,
+      round_id: round.id,
+      team_id: team.id,
+      auto_assigned: true,
+      outcome: "pending",
+    });
+  }
+
+  if (stuck.length > 0) {
+    return {
+      error: `No team can be auto-assigned for: ${stuck.join(", ")}. Every team they can still use is already out of this matchday — needs an organiser decision.`,
+    };
+  }
+
+  if (autoRows.length > 0) {
+    const { error } = await supabaseServer.from("picks").insert(autoRows);
+    if (error) {
+      console.error("auto-assign insert failed:", error);
+      return { error: "Could not auto-assign missing picks." };
+    }
+  }
+
+  // ---- 2. settle through the engine ----
+  const livePicks = await getPicksForRound(round.id);
+  const engineEntries: EntryRecord[] = entries.map((e) => ({
+    id: e.id,
+    participant_id: e.participant_id,
+    status: e.status,
+  }));
+  const enginePicks: PickRecord[] = livePicks.map((p) => ({
+    entry_id: p.entry_id,
+    team_id: p.team_id,
+  }));
+
+  const settlement = settleRound(
+    engineEntries,
+    enginePicks,
+    fixtures,
+    round.matchday
+  );
+
+  if (settlement.unsettled.length > 0) {
+    return {
+      error: `${settlement.unsettled.length} pick(s) can't be settled yet — enter every fixture's result first.`,
+    };
+  }
+
+  // ---- 3. write pick outcomes and entry statuses ----
+  const outcomeByEntry = new Map(
+    settlement.outcomes.map((o) => [o.entry_id, o.outcome])
+  );
+  for (const pick of livePicks) {
+    const outcome = outcomeByEntry.get(pick.entry_id);
+    if (!outcome || outcome === pick.outcome) continue;
+    const { error } = await supabaseServer
+      .from("picks")
+      .update({ outcome })
+      .eq("id", pick.id);
+    if (error) {
+      console.error("pick outcome write failed:", error);
+      return { error: "Could not write pick outcomes." };
+    }
+  }
+
+  const eliminated = settlement.entries.filter(
+    (e) =>
+      e.status === "eliminated" &&
+      entries.find((row) => row.id === e.id)?.status === "active"
+  );
+  for (const entry of eliminated) {
+    const { error } = await supabaseServer
+      .from("entries")
+      .update({ status: "eliminated", eliminated_round_id: round.id })
+      .eq("id", entry.id);
+    if (error) {
+      console.error("entry elimination write failed:", error);
+      return { error: "Could not eliminate entries." };
+    }
+  }
+
+  // ---- 4. resolve and apply the end state ----
+  const end = resolveEndState(settlement.entries);
+  const provisional = isWinPendingUnplayedFixtures(
+    end,
+    settlement.survivedViaUnplayed
+  );
+
+  const { error: roundError } = await supabaseServer
+    .from("rounds")
+    .update({ status: "settled" })
+    .eq("id", round.id);
+  if (roundError) {
+    console.error("round settle write failed:", roundError);
+    return { error: "Could not mark the round settled." };
   }
 
   revalidatePath("/admin/results");
+  revalidatePath("/board");
+
+  const survivors = eliminated.length;
+
+  if (end.kind === "continue") {
+    return {
+      ok: `Round ${round.round_number} settled — ${survivors} out, ${end.entry_ids.length} still standing.`,
+    };
+  }
+
+  if (end.kind === "rollover") {
+    const { error } = await supabaseServer
+      .from("competitions")
+      .update({ status: "rolled_over" })
+      .eq("id", competition.id);
+    if (error) {
+      console.error("rollover write failed:", error);
+      return { error: "Could not mark the competition rolled over." };
+    }
+    const pot = potPence(
+      competition.pot_carried_in_pence,
+      entries.map((e) => ({
+        paid: e.paid,
+        amount_paid_pence: e.amount_paid_pence,
+      }))
+    );
+    return {
+      ok: `Everyone went out in round ${round.round_number}. Competition rolled over — carry ${(pot / 100).toFixed(2)} into the next one (set it as "pot carried in", rollover count ${competition.rollover_count + 1}).`,
+    };
+  }
+
+  // end.kind === "won"
+  if (provisional) {
+    return {
+      ok: `Round ${round.round_number} settled, but the win rests only on postponed/abandoned fixture(s) — NOT settling the competition. Per the rules, resolve once those games are played.`,
+    };
+  }
+
+  // Entries become 'winner' FIRST so the competition update passes the
+  // won-integrity trigger (see the note on this function).
+  for (const id of end.entry_ids) {
+    const { error } = await supabaseServer
+      .from("entries")
+      .update({ status: "winner" })
+      .eq("id", id);
+    if (error) {
+      console.error("winner entry write failed:", error);
+      return { error: "Could not mark the winning entries." };
+    }
+  }
+
+  const { error: wonError } = await supabaseServer
+    .from("competitions")
+    .update({ status: "won", winner_participant_id: end.participant_id })
+    .eq("id", competition.id);
+  if (wonError) {
+    console.error("competition won write failed:", wonError);
+    return { error: "Could not mark the competition won." };
+  }
+
+  const winner = entries.find(
+    (e) => e.participant_id === end.participant_id
+  )?.participant?.name;
+
+  return {
+    ok: `${winner ?? "Winner"} is the Last Man Standing — competition won with ${end.entry_ids.length} surviving ${end.entry_ids.length === 1 ? "entry" : "entries"}.`,
+  };
 }

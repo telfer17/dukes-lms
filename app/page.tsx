@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 
 // Deliberately static: no database access, so the app always boots while the
 // Last Man Standing schema and screens are still being built.
@@ -17,6 +18,14 @@ export default function Home() {
         Dukes — Last Man Standing
       </h1>
       <p className="mt-3 text-lg text-gray-600">Coming soon</p>
+      <p className="mt-6">
+        <Link
+          href="/board"
+          className="inline-block rounded-md border-2 border-blue-600 px-6 py-3 font-semibold text-blue-600 hover:bg-blue-50"
+        >
+          See who&apos;s still standing
+        </Link>
+      </p>
     </main>
   );
 }

@@ -16,6 +16,12 @@ export default function NavBar() {
           Dukes — Last Man Standing
         </Link>
         <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+          <Link
+            href="/board"
+            className="py-1 text-gray-600 hover:text-gray-900"
+          >
+            The board
+          </Link>
           <a
             href="https://footyfees.co.uk"
             target="_blank"
