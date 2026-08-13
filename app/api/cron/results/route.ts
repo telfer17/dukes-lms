@@ -1,0 +1,298 @@
+import { constantTimeEqual } from "@/lib/admin-auth";
+import {
+  DEFAULT_GRACE_MS,
+  matchFeedToFixtures,
+  type DueFixture,
+  type FeedMatch,
+} from "@/lib/results-feed";
+import { resolveTeamName, type CanonicalTeam } from "@/lib/team-names";
+import { supabaseServer } from "@/lib/supabase-server";
+
+// Auto-fill Premier League results for fixtures that have already kicked off.
+//
+// FILLS RESULTS ONLY. Settlement stays manual: an organiser reviews the
+// results in /admin/results and presses Settle. This route never touches
+// entries, picks or rounds, and never calls the settlement engine.
+//
+// Runs daily from vercel.json, and can be triggered by hand with the same
+// secret after a matchday.
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+const API_HOST = "https://v3.football.api-sports.io";
+const LEAGUE_ID = 39; // Premier League
+const SEASON = 2026; // 2026/27
+
+type Report = {
+  ok: boolean;
+  checked: number;
+  updated: { fixtureId: number; score: string; result: string }[];
+  skipped: {
+    alreadyResulted: number;
+    roundSettled: { fixtureId: number; round: number }[];
+    notReportedYet: number;
+    abandoned: { fixtureId: number; statusShort: string }[];
+  };
+  unmapped: string[];
+  errors: string[];
+};
+
+function unauthorized() {
+  return Response.json({ error: "Unauthorized" }, { status: 401 });
+}
+
+/** Header or query param, compared in constant time. */
+function isAuthorised(request: Request): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+
+  const header = request.headers.get("authorization") ?? "";
+  const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
+  const supplied =
+    bearer ||
+    request.headers.get("x-cron-secret") ||
+    new URL(request.url).searchParams.get("secret") ||
+    "";
+
+  return supplied.length > 0 && constantTimeEqual(supplied, secret);
+}
+
+export async function GET(request: Request) {
+  if (!isAuthorised(request)) return unauthorized();
+
+  const report: Report = {
+    ok: true,
+    checked: 0,
+    updated: [],
+    skipped: {
+      alreadyResulted: 0,
+      roundSettled: [],
+      notReportedYet: 0,
+      abandoned: [],
+    },
+    unmapped: [],
+    errors: [],
+  };
+
+  const apiKey = process.env.API_FOOTBALL_KEY;
+  if (!apiKey) {
+    report.ok = false;
+    report.errors.push("API_FOOTBALL_KEY is not set.");
+    return Response.json(report, { status: 500 });
+  }
+
+  // ---- 1. our fixtures that should have finished ----
+  const now = Date.now();
+  let candidates: {
+    id: number;
+    matchday: number;
+    kickoff: string;
+    status: string;
+    result: string | null;
+    home_team_id: number;
+    away_team_id: number;
+  }[];
+  let teamNameById: Map<number, string>;
+
+  try {
+    const [fixturesRes, teamsRes] = await Promise.all([
+      supabaseServer
+        .from("fixtures")
+        .select("id, matchday, kickoff, status, result, home_team_id, away_team_id")
+        .eq("status", "scheduled")
+        .lte("kickoff", new Date(now - DEFAULT_GRACE_MS).toISOString())
+        .order("kickoff"),
+      supabaseServer.from("teams").select("id, name"),
+    ]);
+    if (fixturesRes.error) throw new Error(fixturesRes.error.message);
+    if (teamsRes.error) throw new Error(teamsRes.error.message);
+    candidates = fixturesRes.data ?? [];
+    teamNameById = new Map(
+      (teamsRes.data ?? []).map((t: { id: number; name: string }) => [t.id, t.name])
+    );
+  } catch (e) {
+    report.ok = false;
+    report.errors.push(
+      `Could not read fixtures: ${e instanceof Error ? e.message : "unknown error"}`
+    );
+    return Response.json(report, { status: 500 });
+  }
+
+  // Never overwrite something already entered — manual entry always wins.
+  const pristine = candidates.filter((f) => f.result === null);
+  report.skipped.alreadyResulted = candidates.length - pristine.length;
+  report.checked = pristine.length;
+
+  if (pristine.length === 0) {
+    return Response.json(report);
+  }
+
+  // ---- 2. respect the settled-round guard ----
+  // A settled round's results were already applied to players; changing one
+  // now would desync the board from what people were knocked out on.
+  const matchdays = [...new Set(pristine.map((f) => f.matchday))];
+  const settledMatchdays = new Map<number, number>();
+  try {
+    const { data, error } = await supabaseServer
+      .from("rounds")
+      .select("matchday, round_number")
+      .in("matchday", matchdays)
+      .eq("status", "settled");
+    if (error) throw new Error(error.message);
+    for (const row of (data ?? []) as { matchday: number; round_number: number }[]) {
+      settledMatchdays.set(row.matchday, row.round_number);
+    }
+  } catch (e) {
+    report.ok = false;
+    report.errors.push(
+      `Could not read rounds: ${e instanceof Error ? e.message : "unknown error"}`
+    );
+    return Response.json(report, { status: 500 });
+  }
+
+  const writable: DueFixture[] = [];
+  for (const f of pristine) {
+    const settledRound = settledMatchdays.get(f.matchday);
+    if (settledRound !== undefined) {
+      report.skipped.roundSettled.push({ fixtureId: f.id, round: settledRound });
+      continue;
+    }
+    const home = resolveTeamName(teamNameById.get(f.home_team_id) ?? "");
+    const away = resolveTeamName(teamNameById.get(f.away_team_id) ?? "");
+    if (!home || !away) {
+      // Our own teams table disagreeing with the canonical list is a config
+      // problem, not a feed problem — surface it rather than skipping quietly.
+      report.ok = false;
+      report.errors.push(
+        `Fixture ${f.id} references a club not in the canonical list — check teams.name.`
+      );
+      continue;
+    }
+    writable.push({
+      id: f.id,
+      matchday: f.matchday,
+      kickoff: f.kickoff,
+      home: home as CanonicalTeam,
+      away: away as CanonicalTeam,
+    });
+  }
+
+  if (writable.length === 0) {
+    return Response.json(report);
+  }
+
+  // ---- 3. one feed call for the whole season ----
+  let feed: FeedMatch[];
+  try {
+    const response = await fetch(
+      `${API_HOST}/fixtures?league=${LEAGUE_ID}&season=${SEASON}&status=FT-AET-PEN`,
+      {
+        headers: { "x-apisports-key": apiKey },
+        cache: "no-store",
+        signal: AbortSignal.timeout(30_000),
+      }
+    );
+
+    if (!response.ok) {
+      report.ok = false;
+      // Status only — never echo the body, which can carry the key back.
+      report.errors.push(`Results feed returned HTTP ${response.status}.`);
+      return Response.json(report, { status: 502 });
+    }
+
+    const body = (await response.json()) as {
+      errors?: unknown;
+      response?: {
+        fixture: { date: string; status: { short: string } };
+        teams: { home: { name: string }; away: { name: string } };
+        goals: { home: number | null; away: number | null };
+      }[];
+    };
+
+    // API-Football answers 200 with an `errors` payload for a bad key or a
+    // quota breach, so an HTTP 200 is not on its own a success.
+    const apiErrors = body.errors;
+    const hasApiError =
+      Array.isArray(apiErrors)
+        ? apiErrors.length > 0
+        : apiErrors && typeof apiErrors === "object"
+          ? Object.keys(apiErrors).length > 0
+          : false;
+    if (hasApiError) {
+      report.ok = false;
+      report.errors.push(
+        "Results feed rejected the request (check API_FOOTBALL_KEY and quota)."
+      );
+      return Response.json(report, { status: 502 });
+    }
+
+    feed = (body.response ?? []).map((m) => ({
+      homeRaw: m.teams.home.name,
+      awayRaw: m.teams.away.name,
+      homeGoals: m.goals.home,
+      awayGoals: m.goals.away,
+      statusShort: m.fixture.status.short,
+      kickoff: m.fixture.date,
+    }));
+  } catch (e) {
+    report.ok = false;
+    report.errors.push(
+      e instanceof Error && e.name === "TimeoutError"
+        ? "Results feed timed out."
+        : "Results feed is unreachable."
+    );
+    return Response.json(report, { status: 502 });
+  }
+
+  // ---- 4. decide, then write ----
+  const outcome = matchFeedToFixtures(writable, feed);
+  report.unmapped = outcome.unmapped;
+  report.skipped.notReportedYet = outcome.notReported.length;
+  report.skipped.abandoned = outcome.abandoned;
+
+  for (const update of outcome.updates) {
+    // `result is null` in the filter makes the write itself a no-op if an
+    // admin entered this result between our read and now — manual wins.
+    const { error, count } = await supabaseServer
+      .from("fixtures")
+      .update(
+        {
+          home_score: update.home_score,
+          away_score: update.away_score,
+          status: "played",
+          result: update.result,
+        },
+        { count: "exact" }
+      )
+      .eq("id", update.fixtureId)
+      .is("result", null);
+
+    if (error) {
+      report.ok = false;
+      report.errors.push(`Fixture ${update.fixtureId}: ${error.message}`);
+      continue;
+    }
+    if (count === 0) {
+      report.skipped.alreadyResulted += 1;
+      continue;
+    }
+    report.updated.push({
+      fixtureId: update.fixtureId,
+      score: `${update.home_score}-${update.away_score}`,
+      result: update.result,
+    });
+  }
+
+  if (outcome.unmapped.length > 0) {
+    report.ok = false;
+    report.errors.push(
+      `Unrecognised club names in the feed: ${outcome.unmapped.join(", ")}. No guess was made — add them to API_FOOTBALL_ALIASES.`
+    );
+  }
+
+  return Response.json(report, { status: report.ok ? 200 : 207 });
+}
+
+// Same handler for POST, so the job can be triggered by hand with curl.
+export const POST = GET;
