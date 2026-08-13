@@ -18,6 +18,7 @@ import {
   getEntries,
   getFixturesForMatchday,
   getPicksForCompetition,
+  getSettledRoundForMatchday,
   getRounds,
   getTeams,
   isRoundOpen,
@@ -33,6 +34,10 @@ import { supabaseServer } from "@/lib/supabase-server";
  * Returns a result rather than throwing so the row can revert its optimistic
  * state and show the reason — a thrown server-action error reaches the client
  * as a generic boundary message, which would leave a failed save looking saved.
+ *
+ * Refuses once the matchday's round has been settled: eliminations and pick
+ * outcomes were already computed from the old value, so changing it here would
+ * silently desync the board from the results people were knocked out on.
  */
 export async function setFixtureResult(
   fixtureId: number,
@@ -46,6 +51,24 @@ export async function setFixtureResult(
   }
   if (status === "played" && result === null) {
     return { error: "A played fixture needs a result." };
+  }
+
+  const { data: fixture, error: fixtureError } = await supabaseServer
+    .from("fixtures")
+    .select("id, matchday")
+    .eq("id", fixtureId)
+    .maybeSingle<{ id: number; matchday: number }>();
+  if (fixtureError) {
+    console.error("setFixtureResult fixture lookup failed:", fixtureError);
+    return { error: "Failed to read the fixture." };
+  }
+  if (!fixture) return { error: "That fixture no longer exists." };
+
+  const settledRound = await getSettledRoundForMatchday(fixture.matchday);
+  if (settledRound) {
+    return {
+      error: `Round ${settledRound.round_number} has already been settled — this result was applied to players and can't be changed here. Reopening a settled round is a deliberate re-settle, not an edit; it needs doing by hand for now.`,
+    };
   }
 
   const { error } = await supabaseServer
@@ -72,11 +95,13 @@ export async function setFixtureResult(
  *   3. write pick outcomes and entry statuses.
  *   4. resolve the end state and apply it.
  *
- * NOT a database transaction — supabase-js has no multi-statement transaction.
- * Writes are ordered so every intermediate state satisfies the schema's
- * deferred won-integrity trigger: entries become 'winner' BEFORE the
- * competition is marked won. Re-settling is refused up front, so a partial
- * failure can be re-run rather than double-applied.
+ * NOT a database transaction — supabase-js has no multi-statement transaction,
+ * and a Postgres function is deferred to the pre-season hardening pass. Until
+ * then the writes are ordered so every intermediate state is valid and every
+ * step is idempotent: entries become 'winner' BEFORE the competition is marked
+ * won (the deferred won-integrity trigger requires it), the round is flagged
+ * settled last, and a half-applied win is repaired on the next run rather than
+ * wedging the competition.
  */
 export async function settleCurrentRound(): Promise<ActionState> {
   await requireAdmin();
@@ -107,8 +132,80 @@ export async function settleCurrentRound(): Promise<ActionState> {
     return { error: `No fixtures loaded for matchday ${round.matchday}.` };
   }
 
+  /**
+   * Lock the round without settling it — used for a provisional win, which has
+   * to stay retriable. Status 'locked' keeps it as the current round (only
+   * 'settled' advances) and keeps picks closed (isRoundOpen wants 'pending').
+   */
+  async function lockRound(): Promise<ActionResult> {
+    const { error } = await supabaseServer
+      .from("rounds")
+      .update({ status: "locked" })
+      .eq("id", round!.id);
+    if (error) {
+      console.error("round lock write failed:", error);
+      return { error: "Could not lock the round." };
+    }
+    revalidatePath("/admin/results");
+    revalidatePath("/board");
+    return { ok: true };
+  }
+
+  /**
+   * Mark the round settled and refresh the screens. Called LAST in every path:
+   * the round's settled flag is what blocks a re-run, so it must not be set
+   * until the competition-level writes have actually landed. Otherwise a failed
+   * rollover/won write would leave a settled round that can never be retried.
+   */
+  async function finishRound(): Promise<ActionResult> {
+    const { error } = await supabaseServer
+      .from("rounds")
+      .update({ status: "settled" })
+      .eq("id", round!.id);
+    if (error) {
+      console.error("round settle write failed:", error);
+      return { error: "Could not mark the round settled." };
+    }
+    revalidatePath("/admin/results");
+    revalidatePath("/board");
+    return { ok: true };
+  }
+
+
   const teams = await getTeams();
   const entries = await getEntries(competition.id);
+
+  // ---- repair a half-applied win before anything else ----
+  //
+  // The winning entries are marked BEFORE the competition row (the deferred
+  // won-integrity trigger demands that order), so a failure between the two
+  // leaves entries saying 'winner' while the competition is still 'active'.
+  // Every later run would then find zero active entries, refuse, and wedge the
+  // competition: no winner recorded, and the single-active constraint blocking
+  // any new one. Finish the job instead.
+  const winnerEntries = entries.filter((e) => e.status === "winner");
+  if (winnerEntries.length > 0 && !competition.winner_participant_id) {
+    const { error } = await supabaseServer
+      .from("competitions")
+      .update({
+        status: "won",
+        winner_participant_id: winnerEntries[0].participant_id,
+      })
+      .eq("id", competition.id);
+    if (error) {
+      console.error("won recovery write failed:", error);
+      return {
+        error:
+          "The winning entries are marked but the competition row could not be updated. Try again.",
+      };
+    }
+    await finishRound();
+    const name = winnerEntries[0].participant?.name;
+    return {
+      ok: `A previous settle had only got halfway — ${name ?? "the winner"} is now recorded as the winner.`,
+    };
+  }
+
   const activeEntries = entries.filter((e) => e.status === "active");
   if (activeEntries.length === 0) {
     return { error: "No active entries to settle." };
@@ -243,26 +340,6 @@ export async function settleCurrentRound(): Promise<ActionState> {
   );
   const eliminatedCount = eliminated.length;
 
-  /**
-   * Mark the round settled and refresh the screens. Called LAST in every path:
-   * the round's settled flag is what blocks a re-run, so it must not be set
-   * until the competition-level writes have actually landed. Otherwise a failed
-   * rollover/won write would leave a settled round that can never be retried.
-   */
-  async function finishRound(): Promise<ActionResult> {
-    const { error } = await supabaseServer
-      .from("rounds")
-      .update({ status: "settled" })
-      .eq("id", round!.id);
-    if (error) {
-      console.error("round settle write failed:", error);
-      return { error: "Could not mark the round settled." };
-    }
-    revalidatePath("/admin/results");
-    revalidatePath("/board");
-    return { ok: true };
-  }
-
   if (end.kind === "continue") {
     const finished = await finishRound();
     if ("error" in finished) return finished;
@@ -288,7 +365,13 @@ export async function settleCurrentRound(): Promise<ActionState> {
       }))
     );
     const finished = await finishRound();
-    if ("error" in finished) return finished;
+    if ("error" in finished) {
+      // The rollover itself landed — say so, or the admin will think nothing
+      // happened and go looking for a re-run that can never work.
+      return {
+        error: `The competition was marked rolled over, but the round could not be flagged settled. The rollover stands — do not settle again.`,
+      };
+    }
     return {
       ok: `Everyone went out in round ${round.round_number}. Competition rolled over — carry ${formatPence(pot)} into the next one (set it as "pot carried in", rollover count ${competition.rollover_count + 1}).`,
     };
@@ -296,10 +379,17 @@ export async function settleCurrentRound(): Promise<ActionState> {
 
   // end.kind === "won"
   if (provisional) {
-    const finished = await finishRound();
-    if ("error" in finished) return finished;
+    // Deliberately NOT settled. The rules say a player cannot win outright on a
+    // postponed/abandoned game, so this round has to be re-settled once the
+    // real result lands — and the idempotency guard refuses a settled round,
+    // which would strand the competition with no winner forever. Locking keeps
+    // it as the current round and retriable. Re-running is safe: auto-assign
+    // finds no missing picks, outcome writes skip unchanged rows, and
+    // eliminations only touch entries still active in the database.
+    const locked = await lockRound();
+    if ("error" in locked) return locked;
     return {
-      ok: `Round ${round.round_number} settled, but the win rests only on postponed/abandoned fixture(s) — NOT settling the competition. Per the rules, resolve once those games are played.`,
+      ok: `Round ${round.round_number} is decided, but the win rests only on postponed/abandoned fixture(s) — the competition is NOT settled. Per the rules, enter the real result once those games are played and settle this round again.`,
     };
   }
 
@@ -326,7 +416,11 @@ export async function settleCurrentRound(): Promise<ActionState> {
   }
 
   const finished = await finishRound();
-  if ("error" in finished) return finished;
+  if ("error" in finished) {
+    return {
+      error: `The competition was marked won, but the round could not be flagged settled. The result stands — do not settle again.`,
+    };
+  }
 
   const winner = entries.find(
     (e) => e.participant_id === end.participant_id

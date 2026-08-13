@@ -132,6 +132,10 @@ export async function deleteRounds(): Promise<ActionState> {
 
   // picks cascade-delete with their round, so wiping rounds would silently
   // destroy everyone's picks. Refuse rather than take that decision for them.
+  //
+  // Check-then-delete is not atomic, but the race needs a pick landing in the
+  // same instant an organiser clears the rounds on this single-admin screen.
+  // Folded into the pre-season hardening pass if it ever matters.
   const picks = await getPicksForCompetition(competition.id);
   if (picks.length > 0) {
     return {

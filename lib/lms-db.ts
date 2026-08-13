@@ -203,6 +203,25 @@ export async function getPicksForRound(roundId: string): Promise<PickRow[]> {
   return data ?? [];
 }
 
+/**
+ * Any SETTLED round using this matchday. A fixture whose matchday has been
+ * settled must not have its result changed underneath the players — their
+ * eliminations were already computed from the old value.
+ */
+export async function getSettledRoundForMatchday(
+  matchday: number
+): Promise<RoundRow | null> {
+  const { data, error } = await supabaseServer
+    .from("rounds")
+    .select(ROUND_COLS)
+    .eq("matchday", matchday)
+    .eq("status", "settled")
+    .limit(1)
+    .maybeSingle<RoundRow>();
+  if (error) fail("settled round lookup failed", error.message);
+  return data ?? null;
+}
+
 export type FixtureRow = Fixture & { kickoff: string };
 
 export async function getFixturesForMatchday(

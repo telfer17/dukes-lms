@@ -72,7 +72,7 @@ export default async function BoardPage() {
     );
   }
 
-  const [{ data: boardRows }, { data: roundRows }] = await Promise.all([
+  const [boardRes, roundsRes] = await Promise.all([
     supabaseBrowser
       .from("standing_board")
       .select("competition_id, entry_id, name, status, eliminated_round_number")
@@ -86,8 +86,24 @@ export default async function BoardPage() {
       .returns<RoundRow[]>(),
   ]);
 
-  const board = boardRows ?? [];
-  const rounds = roundRows ?? [];
+  // A failed read must not render as an empty competition — "0 of 53 still
+  // standing" on a live board is worse than saying the board is down.
+  if (boardRes.error || roundsRes.error) {
+    console.error("board read failed:", boardRes.error ?? roundsRes.error);
+    return (
+      <main className="mx-auto max-w-2xl px-4 py-16 text-center">
+        <h1 className="text-2xl font-bold tracking-tight">
+          {competition.label}
+        </h1>
+        <p className="mt-3 text-gray-600">
+          The board can&apos;t be loaded right now. Try again in a minute.
+        </p>
+      </main>
+    );
+  }
+
+  const board = boardRes.data ?? [];
+  const rounds = roundsRes.data ?? [];
   const round = currentRound(rounds);
 
   const active = board

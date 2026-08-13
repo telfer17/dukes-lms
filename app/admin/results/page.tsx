@@ -58,6 +58,28 @@ export default async function ResultsPage() {
     loadError = "Could not read results.";
   }
 
+  // Bail rather than render the settle button beside zeroed stats: "0 still
+  // in" next to a destructive action is the worst possible failure mode.
+  if (competition && loadError) {
+    return (
+      <main className="mx-auto max-w-2xl px-4 py-8">
+        <Link href="/admin" className="text-sm text-blue-600 hover:underline">
+          ← Back to dashboard
+        </Link>
+        <h1 className="mt-2 text-2xl font-bold tracking-tight">
+          Results &amp; settling
+        </h1>
+        <p
+          role="alert"
+          className="mt-8 rounded-md border border-red-200 bg-red-50 p-6 text-center text-sm text-red-700"
+        >
+          {loadError} Nothing is shown rather than risk settling against
+          incomplete data — reload to try again.
+        </p>
+      </main>
+    );
+  }
+
   const teamName = new Map(teams.map((t) => [t.id, t.name]));
   const pickCountByTeam = new Map<number, number>();
   for (const p of picks) {

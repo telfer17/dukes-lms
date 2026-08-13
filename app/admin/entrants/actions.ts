@@ -53,6 +53,7 @@ export async function createEntry(
   }
 
   let participantId = existingParticipantId;
+  let createdParticipant = false;
 
   if (!participantId) {
     // Phone is optional; normalise when it's a clean UK number so the
@@ -71,6 +72,7 @@ export async function createEntry(
       return { error: "Could not create the person." };
     }
     participantId = data.id;
+    createdParticipant = true;
   }
 
   const { error } = await supabaseServer.from("entries").insert({
@@ -84,6 +86,17 @@ export async function createEntry(
 
   if (error) {
     console.error("createEntry entry insert failed:", error);
+    // Undo the person we just created, or a retry silently makes a second one
+    // and the picker fills up with duplicates nobody can tell apart.
+    if (createdParticipant) {
+      const { error: cleanupError } = await supabaseServer
+        .from("participants")
+        .delete()
+        .eq("id", participantId);
+      if (cleanupError) {
+        console.error("createEntry rollback failed:", cleanupError);
+      }
+    }
     return { error: "Could not create the entry." };
   }
 
@@ -126,6 +139,10 @@ export async function setEntryPaid(
  * Mark every unpaid entry in a club-contact group paid, at each one's expected
  * amount. Newcomers and returning players owe different amounts, so this is two
  * bulk updates partitioned by the flag rather than a row-at-a-time loop.
+ *
+ * Not wrapped in a transaction: a partial failure is benign here — the filter
+ * is "unpaid only", so re-running simply marks whatever was left. Genuine
+ * atomicity arrives with the scheduled Postgres-function hardening pass.
  */
 export async function markGroupPaid(
   clubContact: string
