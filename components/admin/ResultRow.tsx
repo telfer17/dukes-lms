@@ -3,7 +3,6 @@
 import { useRef, useState, useTransition } from "react";
 import { setResult } from "@/app/admin/results/actions";
 import { validateResult } from "@/lib/admin-results";
-import { TeamLabel } from "@/components/TeamFlag";
 
 type Props = {
   matchId: number;
@@ -70,7 +69,7 @@ export default function ResultRow({
         </div>
         <div className="mt-1 flex w-full items-center gap-2">
           <span className="min-w-0 flex-1 [overflow-wrap:anywhere] text-right text-sm font-medium">
-            <TeamLabel team={home} flagSide="right" />
+            {home}
           </span>
           <input
             type="text"
@@ -92,7 +91,7 @@ export default function ResultRow({
             className="w-12 shrink-0 rounded border border-gray-300 p-1 text-center disabled:bg-gray-100"
           />
           <span className="min-w-0 flex-1 [overflow-wrap:anywhere] text-sm font-medium">
-            <TeamLabel team={away} flagSide="left" />
+            {away}
           </span>
         </div>
         <div className="mt-2 flex items-center gap-2">

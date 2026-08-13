@@ -1,6 +1,5 @@
 import Image from "next/image";
 import Link from "next/link";
-import NavLinks from "@/components/NavLinks";
 
 export default function NavBar() {
   return (
@@ -14,10 +13,9 @@ export default function NavBar() {
             height={32}
             className="rounded-full"
           />
-          World Cup 2026 Predictor
+          Dukes — Last Man Standing
         </Link>
         <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 text-sm">
-          <NavLinks />
           <a
             href="https://footyfees.co.uk"
             target="_blank"

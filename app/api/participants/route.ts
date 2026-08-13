@@ -1,12 +1,7 @@
-import { DEADLINE } from "@/lib/constants";
 import { normaliseUkPhone, stripToDigits } from "@/lib/phone";
 import { supabaseServer } from "@/lib/supabase-server";
 
 export async function POST(request: Request) {
-  if (Date.now() >= DEADLINE.getTime()) {
-    return Response.json({ error: "Entries are closed." }, { status: 403 });
-  }
-
   let body: { name?: string; club_contact?: string; phone?: string };
   try {
     body = await request.json();
@@ -38,10 +33,10 @@ export async function POST(request: Request) {
   }
 
   // Accidental re-submits (or a return trip through /enter) shouldn't make
-  // duplicates: if the same phone + name + club contact already exists,
-  // hand back the existing entry so the redirect lands on their own
-  // predictions. A deliberate second entry uses a different name, e.g.
-  // "John Smith (2)", per the multi-entry guidance on the form.
+  // duplicates: if the same phone + name + club contact already exists, hand
+  // back the existing entry instead of inserting again. A deliberate second
+  // entry uses a different name, e.g. "John Smith (2)", per the multi-entry
+  // guidance on the form.
   const { data: existing, error: lookupError } = await supabaseServer
     .from("participants")
     .select("id, name, club_contact")

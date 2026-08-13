@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useTransition } from "react";
 import { deleteParticipant, setPaid } from "@/app/admin/entrants/actions";
 
@@ -9,10 +8,9 @@ type Props = {
   name: string;
   phone: string | null;
   paid: boolean;
-  predicted: number;
 };
 
-export default function EntrantRow({ id, name, phone, paid, predicted }: Props) {
+export default function EntrantRow({ id, name, phone, paid }: Props) {
   const [pending, startTransition] = useTransition();
 
   return (
@@ -22,13 +20,6 @@ export default function EntrantRow({ id, name, phone, paid, predicted }: Props) 
         <p className="text-xs text-gray-500">{phone}</p>
       </div>
       <div className="flex shrink-0 items-center gap-4">
-        <Link
-          href={`/admin/entrants/${id}/predict`}
-          className="text-xs tabular-nums text-blue-600 hover:underline"
-        >
-          {predicted}/72 ·{" "}
-          {predicted === 0 ? "Enter predictions" : "Edit predictions"}
-        </Link>
         <label className="flex items-center gap-1.5 text-sm">
           <input
             type="checkbox"
@@ -42,11 +33,7 @@ export default function EntrantRow({ id, name, phone, paid, predicted }: Props) 
           type="button"
           disabled={pending}
           onClick={() => {
-            if (
-              window.confirm(
-                `Delete ${name}? This removes their predictions too.`
-              )
-            ) {
+            if (window.confirm(`Delete ${name}?`)) {
               startTransition(() => deleteParticipant(id));
             }
           }}

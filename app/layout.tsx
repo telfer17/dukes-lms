@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import "flag-icons/css/flag-icons.min.css";
 import NavBar from "@/components/NavBar";
 import NavBarGate from "@/components/NavBarGate";
 
@@ -16,29 +15,15 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://world-cup-predictor-flax.vercel.app"),
-  title: "Glasgow Wellington · World Cup 2026 Predictor",
+  title: "Dukes — Last Man Standing",
   description:
-    "Predict all 72 World Cup 2026 group-stage scores. £10 to enter — half to the prize pot, half to the club.",
+    "Glasgow Wellington's Last Man Standing competition. £10 to enter — half to the prize pot, half to the club.",
   openGraph: {
-    title: "Glasgow Wellington · World Cup 2026 Predictor",
+    title: "Dukes — Last Man Standing",
     description:
-      "Predict all 72 World Cup 2026 group-stage scores. £10 to enter — half to the prize pot, half to the club.",
-    url: "/",
-    siteName: "Glasgow Wellington · World Cup 2026 Predictor",
+      "Glasgow Wellington's Last Man Standing competition. £10 to enter — half to the prize pot, half to the club.",
+    siteName: "Dukes — Last Man Standing",
     type: "website",
-    images: [
-      {
-        url: "/og-image.png",
-        width: 1200,
-        height: 630,
-        alt: "Glasgow Wellington · World Cup 2026 Predictor",
-      },
-    ],
-  },
-  twitter: {
-    card: "summary_large_image",
-    images: ["/og-image.png"],
   },
 };
 

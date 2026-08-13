@@ -16,7 +16,6 @@ export type Entrant = {
   name: string;
   phone: string | null;
   paid: boolean;
-  predicted: number;
 };
 
 export type EntrantGroup = {
@@ -33,10 +32,10 @@ export type EntrantTotals = {
   collectedPounds: number;
 };
 
-export function groupEntrants(
-  participants: ParticipantRecord[],
-  predictionCountByParticipantId: Record<string, number>
-): { groups: EntrantGroup[]; totals: EntrantTotals } {
+export function groupEntrants(participants: ParticipantRecord[]): {
+  groups: EntrantGroup[];
+  totals: EntrantTotals;
+} {
   const byContact = new Map<string, Entrant[]>();
   for (const p of participants) {
     const contact = p.club_contact ?? "";
@@ -46,7 +45,6 @@ export function groupEntrants(
       name: p.name,
       phone: p.phone,
       paid: p.paid,
-      predicted: predictionCountByParticipantId[p.id] ?? 0,
     });
     byContact.set(contact, list);
   }

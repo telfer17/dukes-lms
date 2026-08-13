@@ -20,7 +20,6 @@ export async function setResult(
     throw new Error(result.error);
   }
 
-  // Only the matches row changes — the leaderboard view recomputes itself.
   const { error } = await supabaseServer
     .from("matches")
     .update({ home_score: result.home, away_score: result.away })

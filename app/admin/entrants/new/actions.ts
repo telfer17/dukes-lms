@@ -26,16 +26,14 @@ export async function createEntrant(
   const phone =
     phoneRaw === "" ? null : (normaliseUkPhone(phoneRaw) ?? phoneRaw);
 
-  const { data, error } = await supabaseServer
+  const { error } = await supabaseServer
     .from("participants")
-    .insert({ name, club_contact: clubContact, phone, paid })
-    .select("id")
-    .single();
+    .insert({ name, club_contact: clubContact, phone, paid });
 
   if (error) {
     console.error("createEntrant failed:", error);
     return { error: "Failed to add entrant." };
   }
 
-  redirect(`/admin/entrants/${data.id}/predict`);
+  redirect("/admin/entrants");
 }

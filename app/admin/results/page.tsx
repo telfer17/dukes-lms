@@ -29,14 +29,24 @@ const timeFormatter = new Intl.DateTimeFormat("en-GB", {
   hour12: false,
 });
 
-export default async function ResultsPage() {
-  const { data, error } = await supabaseServer
-    .from("matches")
-    .select("id, grp, home, away, kickoff, home_score, away_score")
-    .returns<Match[]>();
-  if (error) throw new Error(error.message);
+// The Last Man Standing schema isn't built yet, so `matches` may not exist.
+// Degrade to an empty list rather than crashing the admin panel.
+async function loadMatches(): Promise<Match[]> {
+  try {
+    const { data, error } = await supabaseServer
+      .from("matches")
+      .select("id, grp, home, away, kickoff, home_score, away_score")
+      .returns<Match[]>();
+    if (error) throw new Error(error.message);
+    return data ?? [];
+  } catch (e) {
+    console.error("matches lookup failed:", e);
+    return [];
+  }
+}
 
-  const matches = (data ?? []).sort(
+export default async function ResultsPage() {
+  const matches = (await loadMatches()).sort(
     (a, b) =>
       new Date(a.kickoff).getTime() - new Date(b.kickoff).getTime() ||
       a.id - b.id
@@ -60,6 +70,13 @@ export default async function ResultsPage() {
       <p className="mt-1 text-sm text-gray-500">
         {resultsEnteredCount(matches)}/{matches.length} results in
       </p>
+
+      {matches.length === 0 && (
+        <p className="mt-8 rounded-md border border-gray-200 p-6 text-center text-gray-500">
+          No fixtures yet — this page will fill in once the Last Man Standing
+          schema is set up.
+        </p>
+      )}
 
       {[...byDate.entries()].map(([date, dayMatches]) => (
         <section key={date} className="mt-8">

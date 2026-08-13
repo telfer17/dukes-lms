@@ -1,22 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 
 type Entry = { id: string; name: string };
 
 export default function FindEntryForm() {
-  const router = useRouter();
-  const navTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Clear any pending recovery timeout when navigation succeeds (unmount).
-  useEffect(
-    () => () => {
-      if (navTimeout.current) clearTimeout(navTimeout.current);
-    },
-    []
-  );
   const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,13 +34,6 @@ export default function FindEntryForm() {
       if (found.length === 0) {
         setNotFound(true);
         setSubmitting(false);
-        return;
-      }
-      if (found.length === 1) {
-        // Leave the button disabled while navigating, but recover if the
-        // navigation stalls so the user isn't stuck on a dead button.
-        navTimeout.current = setTimeout(() => setSubmitting(false), 5_000);
-        router.push(`/predict/${found[0].id}`);
         return;
       }
       setEntries(found);
@@ -105,21 +87,16 @@ export default function FindEntryForm() {
         </p>
       )}
 
-      {entries.length > 1 && (
+      {entries.length > 0 && (
         <div className="rounded-md border border-gray-200 p-3">
           <p className="text-sm font-medium">
-            You have {entries.length} entries — pick one to resume:
+            {entries.length === 1
+              ? "Found your entry:"
+              : `You have ${entries.length} entries:`}
           </p>
-          <ul className="mt-2 space-y-1">
+          <ul className="mt-2 space-y-1 text-sm text-gray-700">
             {entries.map((entry) => (
-              <li key={entry.id}>
-                <Link
-                  href={`/predict/${entry.id}`}
-                  className="text-blue-600 underline hover:text-blue-800"
-                >
-                  {entry.name}
-                </Link>
-              </li>
+              <li key={entry.id}>{entry.name}</li>
             ))}
           </ul>
         </div>

@@ -2,8 +2,7 @@
 // same normalised phone + name + club_contact (case/space-insensitive)
 // returns the existing id instead of inserting a second row.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEADLINE } from "@/lib/constants";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const lookupEq = vi.fn();
 const insert = vi.fn();
@@ -38,15 +37,8 @@ const existingRow = {
 };
 
 beforeEach(() => {
-  vi.useFakeTimers();
-  // One day before the deadline — the route is open.
-  vi.setSystemTime(new Date(DEADLINE.getTime() - 24 * 60 * 60 * 1000));
   lookupEq.mockReset();
   insert.mockClear();
-});
-
-afterEach(() => {
-  vi.useRealTimers();
 });
 
 describe("duplicate entry protection", () => {

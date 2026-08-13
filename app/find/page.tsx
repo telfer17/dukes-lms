@@ -3,7 +3,7 @@ import Link from "next/link";
 import FindEntryForm from "@/components/FindEntryForm";
 
 export const metadata = {
-  title: "Find my entry · Glasgow Wellington World Cup 2026 Predictor",
+  title: "Find my entry · Dukes — Last Man Standing",
 };
 
 export default function FindPage() {
@@ -23,8 +23,7 @@ export default function FindPage() {
       />
       <h1 className="mt-6 text-3xl font-bold tracking-tight">Find my entry</h1>
       <p className="mt-2 text-gray-600">
-        Enter the phone number you signed up with to get back to your
-        predictions.
+        Enter the phone number you signed up with to check your entry.
       </p>
       <FindEntryForm />
       </div>
