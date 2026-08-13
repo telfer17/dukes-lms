@@ -325,56 +325,68 @@ comment on column picks.outcome is
 -- pass through legitimately inconsistent intermediate states.
 --
 -- It fires from BOTH sides: from competitions (marking 'won' without a
--- winner), and from entries (stripping 'winner' off the entry, or deleting it,
--- after the competition was settled). Scope is deliberately narrow — only the
--- "won implies a consistent winner" invariant. Other statuses are unconstrained
--- and no other entry is examined.
+-- winner), and from entries (stripping 'winner' off the entry, deleting it, or
+-- MOVING it to another competition after the competition was settled). Scope is
+-- deliberately narrow — only the "won implies a consistent winner" invariant.
+-- Other statuses are unconstrained and no other entry is examined.
 -- ----------------------------------------------------------------------------
 create or replace function assert_won_competition_has_winner()
 returns trigger
 language plpgsql
 as $$
 declare
-  target_id uuid;
-  comp      competitions%rowtype;
+  target_ids uuid[];
+  target_id  uuid;
+  comp       competitions%rowtype;
 begin
   if tg_table_name = 'competitions' then
-    target_id := new.id;                -- competitions fires on insert/update only
+    target_ids := array[new.id];              -- fires on insert/update only
   elsif tg_op = 'DELETE' then
-    target_id := old.competition_id;
+    target_ids := array[old.competition_id];
+  elsif tg_op = 'INSERT' then
+    target_ids := array[new.competition_id];
   else
-    target_id := new.competition_id;
+    -- UPDATE on entries. An entry can be MOVED between competitions, so BOTH
+    -- ends need re-checking: the competition it left could otherwise be
+    -- stranded 'won' with no winner row. Deduplicated — competition_id is
+    -- unchanged in the overwhelmingly common case (a status edit).
+    target_ids := array[new.competition_id];
+    if old.competition_id is distinct from new.competition_id then
+      target_ids := target_ids || old.competition_id;
+    end if;
   end if;
 
-  select * into comp from competitions where id = target_id;
+  foreach target_id in array target_ids loop
+    select * into comp from competitions where id = target_id;
 
-  -- The competition itself is gone (e.g. deleted, cascading its entries).
-  if not found then
-    return null;
-  end if;
+    -- The competition itself is gone (e.g. deleted, cascading its entries).
+    if not found then
+      continue;
+    end if;
 
-  -- Only 'won' carries the invariant; 'active' and 'rolled_over' are free.
-  if comp.status <> 'won' then
-    return null;
-  end if;
+    -- Only 'won' carries the invariant; 'active' and 'rolled_over' are free.
+    if comp.status <> 'won' then
+      continue;
+    end if;
 
-  if comp.winner_participant_id is null then
-    raise exception
-      'competition % is marked won but names no winner_participant_id', comp.id
-      using errcode = 'check_violation';
-  end if;
+    if comp.winner_participant_id is null then
+      raise exception
+        'competition % is marked won but names no winner_participant_id', comp.id
+        using errcode = 'check_violation';
+    end if;
 
-  if not exists (
-    select 1 from entries e
-    where e.competition_id = comp.id
-      and e.participant_id = comp.winner_participant_id
-      and e.status = 'winner'
-  ) then
-    raise exception
-      'competition % is marked won but participant % holds no entry with status = winner',
-      comp.id, comp.winner_participant_id
-      using errcode = 'check_violation';
-  end if;
+    if not exists (
+      select 1 from entries e
+      where e.competition_id = comp.id
+        and e.participant_id = comp.winner_participant_id
+        and e.status = 'winner'
+    ) then
+      raise exception
+        'competition % is marked won but participant % holds no entry with status = winner',
+        comp.id, comp.winner_participant_id
+        using errcode = 'check_violation';
+    end if;
+  end loop;
 
   return null;
 end;
