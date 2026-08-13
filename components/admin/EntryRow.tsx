@@ -32,6 +32,16 @@ export default function EntryRow({
 }) {
   const [pending, startTransition] = useTransition();
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+
+  /** Run a row action and surface any failure next to the row. */
+  function run(action: () => Promise<{ ok: true } | { error: string }>) {
+    setError("");
+    startTransition(async () => {
+      const result = await action();
+      if ("error" in result) setError(result.error);
+    });
+  }
 
   const pickPath = `/pick/${id}`;
 
@@ -67,6 +77,11 @@ export default function EntryRow({
             </span>
           )}
         </p>
+        {error && (
+          <p role="alert" className="text-xs font-medium text-red-600">
+            {error}
+          </p>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-3">
@@ -84,9 +99,7 @@ export default function EntryRow({
             type="checkbox"
             checked={paid}
             disabled={pending}
-            onChange={() =>
-              startTransition(() => setEntryPaid(id, !paid, expectedPence))
-            }
+            onChange={() => run(() => setEntryPaid(id, !paid, expectedPence))}
           />
           Paid
         </label>
@@ -96,7 +109,7 @@ export default function EntryRow({
           disabled={pending}
           onClick={() => {
             if (window.confirm(`Delete this entry for ${name}?`)) {
-              startTransition(() => deleteEntry(id));
+              run(() => deleteEntry(id));
             }
           }}
           className="text-sm font-medium text-red-600 hover:underline disabled:opacity-50"

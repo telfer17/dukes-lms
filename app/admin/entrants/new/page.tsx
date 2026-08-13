@@ -1,7 +1,7 @@
 import Link from "next/link";
 import NewEntryForm from "@/components/admin/NewEntryForm";
 import { expectedBuyInPence, formatPence } from "@/lib/competition";
-import { getActiveCompetition, getEntries } from "@/lib/lms-db";
+import { getActiveCompetition, getParticipants } from "@/lib/lms-db";
 
 export const dynamic = "force-dynamic";
 
@@ -24,21 +24,16 @@ export default async function NewEntryPage() {
     );
   }
 
-  // Existing people, so a second entry for the same person reuses their record
-  // rather than duplicating them.
-  const entries = await getEntries(competition.id).catch(() => []);
+  // EVERY person on record, not just those already entered in this competition
+  // — someone returning from a previous competition must be reusable, or the
+  // organiser ends up creating a duplicate person for them.
+  const participants = await getParticipants().catch(() => []);
   const people = [
     ...new Map(
-      entries
-        .filter((e) => e.participant)
-        .map((e) => [
-          e.participant.id,
-          {
-            id: e.participant.id,
-            name: e.participant.name,
-            club_contact: e.participant.club_contact,
-          },
-        ])
+      participants.map((p) => [
+        p.id,
+        { id: p.id, name: p.name, club_contact: p.club_contact },
+      ])
     ).values(),
   ].sort((a, b) => a.name.localeCompare(b.name));
 

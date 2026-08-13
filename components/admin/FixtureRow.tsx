@@ -28,18 +28,26 @@ export default function FixtureRow({
   const [pending, startTransition] = useTransition();
 
   function save(nextStatus: FixtureStatus, nextResult: FixtureResult | null) {
+    // Capture what is currently persisted BEFORE showing the new state, so a
+    // failed save can put the row back rather than leaving it looking saved.
+    const prevStatus = status;
+    const prevResult = result;
+
     setStatus(nextStatus);
     setResult(nextResult);
     setError("");
     setSaved(false);
+
     startTransition(async () => {
-      try {
-        await setFixtureResult(fixtureId, nextStatus, nextResult);
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2_000);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Save failed.");
+      const outcome = await setFixtureResult(fixtureId, nextStatus, nextResult);
+      if ("error" in outcome) {
+        setStatus(prevStatus);
+        setResult(prevResult);
+        setError(outcome.error);
+        return;
       }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2_000);
     });
   }
 

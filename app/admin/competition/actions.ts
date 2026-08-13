@@ -1,15 +1,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { ActionState } from "@/lib/action-state";
 import { requireAdmin } from "@/lib/admin-auth";
 import { supabaseServer } from "@/lib/supabase-server";
 import {
   getActiveCompetition,
   getMatchdayDeadlines,
+  getPicksForCompetition,
   getRounds,
 } from "@/lib/lms-db";
-
-export type ActionState = { error: string } | { ok: string } | null;
 
 /**
  * Create a competition. Only one may be active at a time (enforced by the
@@ -128,6 +128,15 @@ export async function deleteRounds(): Promise<ActionState> {
   const rounds = await getRounds(competition.id);
   if (rounds.some((r) => r.status === "settled")) {
     return { error: "Some rounds are already settled — refusing to delete." };
+  }
+
+  // picks cascade-delete with their round, so wiping rounds would silently
+  // destroy everyone's picks. Refuse rather than take that decision for them.
+  const picks = await getPicksForCompetition(competition.id);
+  if (picks.length > 0) {
+    return {
+      error: `${picks.length} pick(s) have already been made in this competition — deleting the rounds would delete them too. Refusing.`,
+    };
   }
 
   const { error } = await supabaseServer

@@ -1,13 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { ActionResult, ActionState } from "@/lib/action-state";
 import { requireAdmin } from "@/lib/admin-auth";
 import { expectedBuyInPence } from "@/lib/competition";
 import { getActiveCompetition } from "@/lib/lms-db";
 import { normaliseUkPhone } from "@/lib/phone";
+import { partitionByNewcomer } from "@/lib/group-payment";
 import { supabaseServer } from "@/lib/supabase-server";
-
-export type ActionState = { error: string } | { ok: string } | null;
 
 /**
  * Add an entry to the active competition.
@@ -91,16 +91,22 @@ export async function createEntry(
   return { ok: "Entry added." };
 }
 
-/** Toggle payment on one entry, recording what was actually paid. */
+/**
+ * Toggle payment on one entry, recording what was actually paid.
+ *
+ * Returns a result rather than throwing: the caller is a checkbox in a
+ * transition, and a thrown server-action error is swallowed into a generic
+ * boundary message instead of reaching the row.
+ */
 export async function setEntryPaid(
   entryId: string,
   paid: boolean,
   amountPence: number
-): Promise<void> {
+): Promise<ActionResult> {
   await requireAdmin();
 
   if (!Number.isInteger(amountPence) || amountPence < 0) {
-    throw new Error("Invalid amount.");
+    return { error: "Invalid amount." };
   }
 
   const { error } = await supabaseServer
@@ -110,18 +116,28 @@ export async function setEntryPaid(
 
   if (error) {
     console.error("setEntryPaid failed:", error);
-    throw new Error("Failed to update payment.");
+    return { error: "Failed to update payment." };
   }
   revalidatePath("/admin/entrants");
+  return { ok: true };
 }
 
-/** Mark every entry in a club-contact group paid, at each one's expected amount. */
-export async function markGroupPaid(clubContact: string): Promise<void> {
+/**
+ * Mark every unpaid entry in a club-contact group paid, at each one's expected
+ * amount. Newcomers and returning players owe different amounts, so this is two
+ * bulk updates partitioned by the flag rather than a row-at-a-time loop.
+ */
+export async function markGroupPaid(
+  clubContact: string
+): Promise<ActionResult> {
   await requireAdmin();
 
   const competition = await getActiveCompetition();
-  if (!competition) throw new Error("No active competition.");
+  if (!competition) return { error: "No active competition." };
 
+  // The embedded participants table is aliased `participant`, and PostgREST
+  // accepts either the alias or the table name in the filter; the alias is used
+  // here so the filter reads consistently with the select.
   const query = supabaseServer
     .from("entries")
     .select("id, is_newcomer, participant:participants!inner (club_contact)")
@@ -130,37 +146,47 @@ export async function markGroupPaid(clubContact: string): Promise<void> {
 
   const { data, error } =
     clubContact === ""
-      ? await query.is("participants.club_contact", null)
-      : await query.eq("participants.club_contact", clubContact);
+      ? await query.is("participant.club_contact", null)
+      : await query.eq("participant.club_contact", clubContact);
 
   if (error) {
     console.error("markGroupPaid lookup failed:", error);
-    throw new Error("Failed to read the group.");
+    return { error: "Failed to read the group." };
   }
 
-  const rows = (data ?? []) as unknown as { id: string; is_newcomer: boolean }[];
-  for (const row of rows) {
+  const rows = (data ?? []) as unknown as {
+    id: string;
+    is_newcomer: boolean;
+  }[];
+  const { newcomerIds, returningIds } = partitionByNewcomer(rows);
+
+  for (const [ids, isNewcomer] of [
+    [newcomerIds, true],
+    [returningIds, false],
+  ] as [string[], boolean][]) {
+    if (ids.length === 0) continue;
     const { error: updateError } = await supabaseServer
       .from("entries")
       .update({
         paid: true,
         amount_paid_pence: expectedBuyInPence(
           competition.rollover_count,
-          row.is_newcomer
+          isNewcomer
         ),
       })
-      .eq("id", row.id);
+      .in("id", ids);
     if (updateError) {
       console.error("markGroupPaid update failed:", updateError);
-      throw new Error("Failed to mark the group paid.");
+      return { error: "Failed to mark the group paid." };
     }
   }
 
   revalidatePath("/admin/entrants");
+  return { ok: true };
 }
 
 /** Delete an entry. The person stays — they may hold other entries. */
-export async function deleteEntry(entryId: string): Promise<void> {
+export async function deleteEntry(entryId: string): Promise<ActionResult> {
   await requireAdmin();
 
   const { error } = await supabaseServer
@@ -170,7 +196,8 @@ export async function deleteEntry(entryId: string): Promise<void> {
 
   if (error) {
     console.error("deleteEntry failed:", error);
-    throw new Error("Failed to delete the entry.");
+    return { error: "Failed to delete the entry." };
   }
   revalidatePath("/admin/entrants");
+  return { ok: true };
 }

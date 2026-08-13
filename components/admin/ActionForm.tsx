@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import type { ActionState } from "@/app/admin/competition/actions";
+import type { ActionState } from "@/lib/action-state";
 
 /**
  * Thin wrapper for the admin's small server-action forms: wires useActionState,

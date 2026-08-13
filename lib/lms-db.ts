@@ -131,6 +131,21 @@ export function isRoundOpen(round: RoundRow, now: Date = new Date()): boolean {
   return round.status === "pending" && now.getTime() < Date.parse(round.deadline);
 }
 
+/**
+ * Every person on record, name-sorted. The add-entry form needs ALL
+ * participants, not just those with an entry in the active competition —
+ * someone from a previous competition must be reusable rather than duplicated.
+ */
+export async function getParticipants(): Promise<ParticipantRow[]> {
+  const { data, error } = await supabaseServer
+    .from("participants")
+    .select("id, name, phone, club_contact")
+    .order("name")
+    .returns<ParticipantRow[]>();
+  if (error) fail("participants lookup failed", error.message);
+  return data ?? [];
+}
+
 export async function getEntries(
   competitionId: string
 ): Promise<EntryWithParticipant[]> {

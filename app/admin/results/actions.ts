@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { ActionResult, ActionState } from "@/lib/action-state";
 import { requireAdmin } from "@/lib/admin-auth";
 import {
   autoAssignTeam,
@@ -10,39 +11,41 @@ import {
   type EntryRecord,
   type PickRecord,
 } from "@/lib/lms";
-import { potPence } from "@/lib/competition";
+import { formatPence, potPence } from "@/lib/competition";
 import {
   currentRound,
   getActiveCompetition,
   getEntries,
   getFixturesForMatchday,
   getPicksForCompetition,
-  getPicksForRound,
   getRounds,
   getTeams,
+  isRoundOpen,
   pickHistoryTeamIds,
 } from "@/lib/lms-db";
 import { supabaseServer } from "@/lib/supabase-server";
-
-export type ActionState = { error: string } | { ok: string } | null;
 
 /**
  * Record a fixture's outcome. Only status and result — Last Man Standing needs
  * win/draw/loss, not the scoreline. The schema's CHECK enforces that a result
  * only exists on a played game; we mirror that here for a clean message.
+ *
+ * Returns a result rather than throwing so the row can revert its optimistic
+ * state and show the reason — a thrown server-action error reaches the client
+ * as a generic boundary message, which would leave a failed save looking saved.
  */
 export async function setFixtureResult(
   fixtureId: number,
   status: "scheduled" | "played" | "postponed" | "abandoned",
   result: "home" | "away" | "draw" | null
-): Promise<void> {
+): Promise<ActionResult> {
   await requireAdmin();
 
   if (status !== "played" && result !== null) {
-    throw new Error("Only a played fixture can have a result.");
+    return { error: "Only a played fixture can have a result." };
   }
   if (status === "played" && result === null) {
-    throw new Error("A played fixture needs a result.");
+    return { error: "A played fixture needs a result." };
   }
 
   const { error } = await supabaseServer
@@ -52,9 +55,10 @@ export async function setFixtureResult(
 
   if (error) {
     console.error("setFixtureResult failed:", error);
-    throw new Error("Failed to save the result.");
+    return { error: "Failed to save the result." };
   }
   revalidatePath("/admin/results");
+  return { ok: true };
 }
 
 /**
@@ -87,6 +91,15 @@ export async function settleCurrentRound(): Promise<ActionState> {
   // Idempotency guard — settling twice must never double-apply.
   if (round.status === "settled") {
     return { error: `Round ${round.round_number} is already settled.` };
+  }
+
+  // Refuse while picks can still change. Settling an open round would
+  // auto-assign teams to entries that still have time to choose, and would open
+  // a window where a pick lands between settlement reading and writing.
+  if (isRoundOpen(round)) {
+    return {
+      error: `Round ${round.round_number} is still open — picks lock at the deadline. Settle after it passes.`,
+    };
   }
 
   const fixtures = await getFixturesForMatchday(round.matchday);
@@ -144,25 +157,21 @@ export async function settleCurrentRound(): Promise<ActionState> {
     };
   }
 
-  if (autoRows.length > 0) {
-    const { error } = await supabaseServer.from("picks").insert(autoRows);
-    if (error) {
-      console.error("auto-assign insert failed:", error);
-      return { error: "Could not auto-assign missing picks." };
-    }
-  }
+  // NOTE: auto-assigned picks are NOT written yet. They are persisted only once
+  // the engine confirms the round can actually settle, so an early or failed
+  // settle leaves everyone's picks exactly as they were.
 
   // ---- 2. settle through the engine ----
-  const livePicks = await getPicksForRound(round.id);
+  const livePicks = picksThisRound;
   const engineEntries: EntryRecord[] = entries.map((e) => ({
     id: e.id,
     participant_id: e.participant_id,
     status: e.status,
   }));
-  const enginePicks: PickRecord[] = livePicks.map((p) => ({
-    entry_id: p.entry_id,
-    team_id: p.team_id,
-  }));
+  const enginePicks: PickRecord[] = [
+    ...livePicks.map((p) => ({ entry_id: p.entry_id, team_id: p.team_id })),
+    ...autoRows.map((p) => ({ entry_id: p.entry_id, team_id: p.team_id })),
+  ];
 
   const settlement = settleRound(
     engineEntries,
@@ -173,7 +182,7 @@ export async function settleCurrentRound(): Promise<ActionState> {
 
   if (settlement.unsettled.length > 0) {
     return {
-      error: `${settlement.unsettled.length} pick(s) can't be settled yet — enter every fixture's result first.`,
+      error: `${settlement.unsettled.length} pick(s) can't be settled yet — enter every fixture's result first. Nothing has been changed.`,
     };
   }
 
@@ -181,6 +190,22 @@ export async function settleCurrentRound(): Promise<ActionState> {
   const outcomeByEntry = new Map(
     settlement.outcomes.map((o) => [o.entry_id, o.outcome])
   );
+
+  // Settlement is possible, so the auto-assignments become real — written with
+  // their settled outcome directly, saving a re-read.
+  if (autoRows.length > 0) {
+    const { error } = await supabaseServer.from("picks").insert(
+      autoRows.map((row) => ({
+        ...row,
+        outcome: outcomeByEntry.get(row.entry_id) ?? "pending",
+      }))
+    );
+    if (error) {
+      console.error("auto-assign insert failed:", error);
+      return { error: "Could not auto-assign missing picks." };
+    }
+  }
+
   for (const pick of livePicks) {
     const outcome = outcomeByEntry.get(pick.entry_id);
     if (!outcome || outcome === pick.outcome) continue;
@@ -216,24 +241,33 @@ export async function settleCurrentRound(): Promise<ActionState> {
     end,
     settlement.survivedViaUnplayed
   );
+  const eliminatedCount = eliminated.length;
 
-  const { error: roundError } = await supabaseServer
-    .from("rounds")
-    .update({ status: "settled" })
-    .eq("id", round.id);
-  if (roundError) {
-    console.error("round settle write failed:", roundError);
-    return { error: "Could not mark the round settled." };
+  /**
+   * Mark the round settled and refresh the screens. Called LAST in every path:
+   * the round's settled flag is what blocks a re-run, so it must not be set
+   * until the competition-level writes have actually landed. Otherwise a failed
+   * rollover/won write would leave a settled round that can never be retried.
+   */
+  async function finishRound(): Promise<ActionResult> {
+    const { error } = await supabaseServer
+      .from("rounds")
+      .update({ status: "settled" })
+      .eq("id", round!.id);
+    if (error) {
+      console.error("round settle write failed:", error);
+      return { error: "Could not mark the round settled." };
+    }
+    revalidatePath("/admin/results");
+    revalidatePath("/board");
+    return { ok: true };
   }
 
-  revalidatePath("/admin/results");
-  revalidatePath("/board");
-
-  const survivors = eliminated.length;
-
   if (end.kind === "continue") {
+    const finished = await finishRound();
+    if ("error" in finished) return finished;
     return {
-      ok: `Round ${round.round_number} settled — ${survivors} out, ${end.entry_ids.length} still standing.`,
+      ok: `Round ${round.round_number} settled — ${eliminatedCount} out, ${end.entry_ids.length} still standing.`,
     };
   }
 
@@ -253,13 +287,17 @@ export async function settleCurrentRound(): Promise<ActionState> {
         amount_paid_pence: e.amount_paid_pence,
       }))
     );
+    const finished = await finishRound();
+    if ("error" in finished) return finished;
     return {
-      ok: `Everyone went out in round ${round.round_number}. Competition rolled over — carry ${(pot / 100).toFixed(2)} into the next one (set it as "pot carried in", rollover count ${competition.rollover_count + 1}).`,
+      ok: `Everyone went out in round ${round.round_number}. Competition rolled over — carry ${formatPence(pot)} into the next one (set it as "pot carried in", rollover count ${competition.rollover_count + 1}).`,
     };
   }
 
   // end.kind === "won"
   if (provisional) {
+    const finished = await finishRound();
+    if ("error" in finished) return finished;
     return {
       ok: `Round ${round.round_number} settled, but the win rests only on postponed/abandoned fixture(s) — NOT settling the competition. Per the rules, resolve once those games are played.`,
     };
@@ -286,6 +324,9 @@ export async function settleCurrentRound(): Promise<ActionState> {
     console.error("competition won write failed:", wonError);
     return { error: "Could not mark the competition won." };
   }
+
+  const finished = await finishRound();
+  if ("error" in finished) return finished;
 
   const winner = entries.find(
     (e) => e.participant_id === end.participant_id

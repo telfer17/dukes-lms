@@ -3,6 +3,7 @@ import EntryRow from "@/components/admin/EntryRow";
 import MarkAllPaidButton from "@/components/admin/MarkAllPaidButton";
 import { groupEntries, type EntryRecord } from "@/lib/admin-entrants";
 import {
+  BASE_ENTRY_PENCE,
   clubPence,
   collectedPence,
   expectedBuyInPence,
@@ -29,6 +30,30 @@ export default async function EntrantsPage() {
   } catch (e) {
     console.error("entrants load failed:", e);
     loadError = "Could not read entrants.";
+  }
+
+  // A failed entries load must never render as an empty competition — the
+  // payment totals would read £0 collected, which is indistinguishable from
+  // "nobody has paid" and is the one number an organiser acts on.
+  if (competition && loadError) {
+    return (
+      <main className="mx-auto max-w-4xl px-4 py-8">
+        <Link href="/admin" className="text-sm text-blue-600 hover:underline">
+          ← Back to dashboard
+        </Link>
+        <h1 className="mt-2 text-2xl font-bold tracking-tight">
+          Entrants &amp; payments
+        </h1>
+        <p className="text-sm text-gray-500">{competition.label}</p>
+        <p
+          role="alert"
+          className="mt-8 rounded-md border border-red-200 bg-red-50 p-6 text-center text-sm text-red-700"
+        >
+          {loadError} Totals are hidden rather than shown as zero — reload to
+          try again.
+        </p>
+      </main>
+    );
   }
 
   if (!competition) {
@@ -124,7 +149,7 @@ export default async function EntrantsPage() {
         Buy-in for this competition: {formatPence(expectedBuyInPence(competition.rollover_count, false))} returning,{" "}
         {formatPence(expectedBuyInPence(competition.rollover_count, true))} newcomer
         {competition.rollover_count > 0 &&
-          ` (£10 × ${competition.rollover_count + 1})`}
+          ` (${formatPence(BASE_ENTRY_PENCE)} × ${competition.rollover_count + 1})`}
         . Pot includes {formatPence(competition.pot_carried_in_pence)} carried in.
       </p>
 

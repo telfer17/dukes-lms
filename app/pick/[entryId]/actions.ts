@@ -73,6 +73,13 @@ export async function submitPick(
 
   // One pick per (entry, round) is a DB constraint — upsert on it so changing a
   // pick before the deadline replaces rather than collides.
+  //
+  // Deliberately NOT wrapped in a transactional RPC. The interleave this would
+  // guard against needs a pick landing mid-settlement, and settlement now
+  // refuses to run on an open round while this route refuses to write to a
+  // closed one — so the two can't overlap. Making settlement genuinely atomic
+  // via a Postgres function is scheduled for the pre-season hardening pass,
+  // and this upsert moves inside it at that point.
   const { error } = await supabaseServer.from("picks").upsert(
     {
       competition_id: entry.competition_id,
