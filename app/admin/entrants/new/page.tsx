@@ -77,7 +77,7 @@ export default function NewEntrantPage() {
           disabled={pending}
           className="w-full rounded-md bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {pending ? "Adding…" : "Add entrant & enter predictions"}
+          {pending ? "Adding…" : "Add entrant"}
         </button>
       </form>
     </main>

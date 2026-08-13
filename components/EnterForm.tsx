@@ -1,15 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
 export default function EnterForm() {
-  const router = useRouter();
   const [name, setName] = useState("");
   const [clubContact, setClubContact] = useState("");
   const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [entered, setEntered] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -21,24 +20,27 @@ export default function EnterForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, club_contact: clubContact, phone }),
       });
-      if (res.status === 403) {
-        setError("Entries are closed.");
-        setSubmitting(false);
-        return;
-      }
       if (!res.ok) {
         const data = await res.json().catch(() => null);
         setError(data?.error ?? "Something went wrong — please try again.");
         setSubmitting(false);
         return;
       }
-      const { id } = await res.json();
-      // Leave the button disabled while navigating.
-      router.push(`/predict/${id}`);
+      setEntered(true);
+      setSubmitting(false);
     } catch {
       setError("Something went wrong — please try again.");
       setSubmitting(false);
     }
+  }
+
+  if (entered) {
+    return (
+      <p className="mt-8 rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+        You&apos;re in — we&apos;ve got your details. Pay your club contact, and
+        picks will open here before the first round.
+      </p>
+    );
   }
 
   return (
@@ -61,7 +63,7 @@ export default function EnterForm() {
           className="mt-1 w-full rounded-md border border-gray-300 p-2"
         />
         <p className="mt-1 text-sm text-gray-500">
-          This is what appears on the leaderboard.
+          This is the name we&apos;ll list you under.
         </p>
       </div>
 

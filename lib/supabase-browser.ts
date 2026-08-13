@@ -10,6 +10,6 @@ if (!url || !publishableKey) {
 }
 
 // Browser-safe client using the publishable key (anon-level access only).
-// Intended for future public reads; predictions writes must go through
-// the server route, since RLS blocks anon writes.
+// Intended for public reads; writes must go through a server route, since
+// RLS blocks anon writes.
 export const supabaseBrowser = createClient(url, publishableKey);
