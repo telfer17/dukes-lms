@@ -3,9 +3,11 @@ import {
   DEFAULT_GRACE_MS,
   FEED_STATUS_FILTER,
   matchFeedToFixtures,
+  parseFeedPayload,
   type DueFixture,
   type FeedMatch,
 } from "@/lib/results-feed";
+import { getActiveCompetition } from "@/lib/lms-db";
 import { resolveTeamName, type CanonicalTeam } from "@/lib/team-names";
 import { supabaseServer } from "@/lib/supabase-server";
 
@@ -135,19 +137,36 @@ export async function GET(request: Request) {
   }
 
   // ---- 2. respect the settled-round guard ----
-  // A settled round's results were already applied to players; changing one
-  // now would desync the board from what people were knocked out on.
+  //
+  // A settled round's results were already applied to players, so we do not
+  // add to one for the competition currently running.
+  //
+  // Scoped to the ACTIVE competition on purpose. rounds_unique_matchday is
+  // unique (competition_id, matchday), so the same matchday legitimately
+  // recurs across competitions — an unscoped lookup would let a long-finished
+  // competition's settled rounds block result-filling on those matchdays for
+  // the rest of the season.
+  //
+  // And deliberately NOT bailing out when no competition is active: fixtures
+  // are season-wide reference data by design (docs/LMS-SCHEMA.md), and filling
+  // results in the gap after a rollover, or before the first competition
+  // starts, is exactly what lets the next one settle cleanly. With nothing
+  // active the guard is simply empty and every due fixture is writable.
   const matchdays = [...new Set(pristine.map((f) => f.matchday))];
   const settledMatchdays = new Map<number, number>();
   try {
-    const { data, error } = await supabaseServer
-      .from("rounds")
-      .select("matchday, round_number")
-      .in("matchday", matchdays)
-      .eq("status", "settled");
-    if (error) throw new Error(error.message);
-    for (const row of (data ?? []) as { matchday: number; round_number: number }[]) {
-      settledMatchdays.set(row.matchday, row.round_number);
+    const active = await getActiveCompetition();
+    if (active) {
+      const { data, error } = await supabaseServer
+        .from("rounds")
+        .select("matchday, round_number")
+        .eq("competition_id", active.id)
+        .in("matchday", matchdays)
+        .eq("status", "settled");
+      if (error) throw new Error(error.message);
+      for (const row of (data ?? []) as { matchday: number; round_number: number }[]) {
+        settledMatchdays.set(row.matchday, row.round_number);
+      }
     }
   } catch (e) {
     report.ok = false;
@@ -209,24 +228,23 @@ export async function GET(request: Request) {
       return Response.json(report, { status: 502 });
     }
 
-    const body = (await response.json()) as {
-      errors?: unknown;
-      response?: {
-        fixture: { date: string; status: { short: string } };
-        teams: { home: { name: string }; away: { name: string } };
-        goals: { home: number | null; away: number | null };
-      }[];
-    };
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      report.ok = false;
+      report.errors.push("Results feed returned a body that is not JSON.");
+      return Response.json(report, { status: 502 });
+    }
 
     // API-Football answers 200 with an `errors` payload for a bad key or a
     // quota breach, so an HTTP 200 is not on its own a success.
-    const apiErrors = body.errors;
-    const hasApiError =
-      Array.isArray(apiErrors)
-        ? apiErrors.length > 0
-        : apiErrors && typeof apiErrors === "object"
-          ? Object.keys(apiErrors).length > 0
-          : false;
+    const apiErrors = (body as { errors?: unknown })?.errors;
+    const hasApiError = Array.isArray(apiErrors)
+      ? apiErrors.length > 0
+      : apiErrors && typeof apiErrors === "object"
+        ? Object.keys(apiErrors).length > 0
+        : false;
     if (hasApiError) {
       report.ok = false;
       report.errors.push(
@@ -235,14 +253,15 @@ export async function GET(request: Request) {
       return Response.json(report, { status: 502 });
     }
 
-    feed = (body.response ?? []).map((m) => ({
-      homeRaw: m.teams.home.name,
-      awayRaw: m.teams.away.name,
-      homeGoals: m.goals.home,
-      awayGoals: m.goals.away,
-      statusShort: m.fixture.status.short,
-      kickoff: m.fixture.date,
-    }));
+    // Strict shape check before anything is matched or written. An empty
+    // response array is a legitimate no-op, not a failure.
+    const parsed = parseFeedPayload(body);
+    if (!parsed.ok) {
+      report.ok = false;
+      report.errors.push(parsed.error);
+      return Response.json(report, { status: 502 });
+    }
+    feed = parsed.feed;
   } catch (e) {
     report.ok = false;
     report.errors.push(
@@ -260,6 +279,14 @@ export async function GET(request: Request) {
   report.skipped.abandoned = outcome.abandoned;
 
   for (const update of outcome.updates) {
+    // No transaction or shared settlement lock here, deliberately. The write
+    // re-asserts BOTH preconditions it read — still scheduled AND still
+    // unresulted — so a decision made against stale state simply lands as a
+    // no-op; the settled-round guard above and settlement's own refusal to
+    // re-run a settled round contain what is left. A genuine shared lock
+    // belongs with the settlement-RPC hardening item, whose design must take
+    // this guard with it (see app/admin/results/actions.ts).
+    //
     // Manual entry always wins, so the write re-asserts both halves of what we
     // read: still unresulted AND still scheduled. `result is null` alone is not
     // enough — an admin who marks a game postponed leaves result null, and

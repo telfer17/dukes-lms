@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_GRACE_MS,
+  parseFeedPayload,
   isAbandoned,
   isDue,
   isFinished,
@@ -206,5 +207,103 @@ describe("matchFeedToFixtures", () => {
       [feedMatch("Zed Town", "Aardvark FC XI", 1, 0), feedMatch("Zed Town", "Chelsea", 0, 0)]
     );
     expect(out.unmapped).toEqual(["Aardvark FC XI", "Zed Town"]);
+  });
+});
+
+describe("parseFeedPayload", () => {
+  const record = (over: Record<string, unknown> = {}) => ({
+    fixture: { date: "2026-08-21T19:00:00+00:00", status: { short: "FT" } },
+    teams: { home: { name: "Arsenal" }, away: { name: "Chelsea" } },
+    goals: { home: 2, away: 1 },
+    ...over,
+  });
+
+  it("accepts a well-formed payload", () => {
+    const out = parseFeedPayload({ response: [record()] });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.feed).toEqual([
+      {
+        homeRaw: "Arsenal",
+        awayRaw: "Chelsea",
+        homeGoals: 2,
+        awayGoals: 1,
+        statusShort: "FT",
+        kickoff: "2026-08-21T19:00:00+00:00",
+      },
+    ]);
+  });
+
+  it("treats an EMPTY response array as a clean no-op, not an error", () => {
+    // The normal answer when nothing has finished yet.
+    const out = parseFeedPayload({ response: [] });
+    expect(out).toEqual({ ok: true, feed: [] });
+  });
+
+  it("accepts explicit null goals (a called-off game)", () => {
+    const out = parseFeedPayload({
+      response: [record({ goals: { home: null, away: null }, fixture: { date: "2026-08-21T19:00:00+00:00", status: { short: "PST" } } })],
+    });
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.feed[0].homeGoals).toBeNull();
+  });
+
+  it("rejects a payload with no response array", () => {
+    for (const body of [{}, { response: null }, { response: "nope" }, null, 42]) {
+      const out = parseFeedPayload(body);
+      expect(out.ok).toBe(false);
+      if (!out.ok) expect(out.error).toContain("`response` array");
+    }
+  });
+
+  it("rejects a record missing a team name", () => {
+    const out = parseFeedPayload({
+      response: [record({ teams: { home: { name: "" }, away: { name: "Chelsea" } } })],
+    });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toContain("missing team name");
+  });
+
+  it("rejects a record missing a status", () => {
+    const out = parseFeedPayload({
+      response: [record({ fixture: { date: "2026-08-21T19:00:00+00:00", status: {} } })],
+    });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toContain("missing fixture status");
+  });
+
+  it("rejects an unparseable kickoff date", () => {
+    const out = parseFeedPayload({
+      response: [record({ fixture: { date: "not-a-date", status: { short: "FT" } } })],
+    });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toContain("kickoff date");
+  });
+
+  it("rejects stringy or non-finite goals rather than coercing them", () => {
+    // "2" would otherwise land in home_score as a string.
+    for (const goals of [
+      { home: "2", away: 1 },
+      { home: 2, away: undefined },
+      { home: Number.NaN, away: 0 },
+      { home: Number.POSITIVE_INFINITY, away: 0 },
+    ]) {
+      const out = parseFeedPayload({ response: [record({ goals })] });
+      expect(out.ok).toBe(false);
+      if (!out.ok) expect(out.error).toContain("goals");
+    }
+  });
+
+  it("names which record was malformed", () => {
+    const out = parseFeedPayload({
+      response: [record(), record(), record({ goals: { home: "x", away: 0 } })],
+    });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toContain("record 2");
+  });
+
+  it("rejects the whole batch — never a partial feed", () => {
+    const out = parseFeedPayload({ response: [record(), record({ teams: {} })] });
+    expect(out.ok).toBe(false);
   });
 });

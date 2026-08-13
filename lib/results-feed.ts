@@ -82,6 +82,86 @@ export function resultFromScore(
   return "draw";
 }
 
+export type FeedParseResult =
+  | { ok: true; feed: FeedMatch[] }
+  | { ok: false; error: string };
+
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === "string" && v.trim().length > 0;
+}
+
+/** Goals are either a real number or an explicit null — never a string. */
+function isGoals(v: unknown): v is number | null {
+  return v === null || (typeof v === "number" && Number.isFinite(v));
+}
+
+function get(obj: unknown, key: string): unknown {
+  return typeof obj === "object" && obj !== null
+    ? (obj as Record<string, unknown>)[key]
+    : undefined;
+}
+
+/**
+ * Validate a raw feed body into FeedMatch records, or explain why not.
+ *
+ * Strict on purpose: a malformed record must stop the whole run rather than
+ * being coerced or skipped, because a half-understood payload is how a wrong
+ * score reaches the board. Goals in particular must be numbers or null — a
+ * stringy "2" would otherwise flow straight into home_score.
+ *
+ * An EMPTY response array is NOT malformed. It is the normal answer when no
+ * game has finished yet, and must read as a clean no-op.
+ */
+export function parseFeedPayload(body: unknown): FeedParseResult {
+  const response = get(body, "response");
+  if (!Array.isArray(response)) {
+    return { ok: false, error: "Results feed payload had no `response` array." };
+  }
+
+  const feed: FeedMatch[] = [];
+  for (const [i, record] of response.entries()) {
+    const fixture = get(record, "fixture");
+    const teams = get(record, "teams");
+    const goals = get(record, "goals");
+
+    const statusShort = get(get(fixture, "status"), "short");
+    const kickoff = get(fixture, "date");
+    const homeRaw = get(get(teams, "home"), "name");
+    const awayRaw = get(get(teams, "away"), "name");
+    const homeGoals = get(goals, "home");
+    const awayGoals = get(goals, "away");
+
+    const complaint =
+      !isNonEmptyString(homeRaw) || !isNonEmptyString(awayRaw)
+        ? "missing team name"
+        : !isNonEmptyString(statusShort)
+          ? "missing fixture status"
+          : !isNonEmptyString(kickoff) || Number.isNaN(Date.parse(kickoff))
+            ? "missing or unparseable kickoff date"
+            : !isGoals(homeGoals) || !isGoals(awayGoals)
+              ? "goals are neither numbers nor null"
+              : null;
+
+    if (complaint) {
+      return {
+        ok: false,
+        error: `Results feed record ${i} is malformed (${complaint}). Nothing was written.`,
+      };
+    }
+
+    feed.push({
+      homeRaw: homeRaw as string,
+      awayRaw: awayRaw as string,
+      homeGoals: homeGoals as number | null,
+      awayGoals: awayGoals as number | null,
+      statusShort: statusShort as string,
+      kickoff: kickoff as string,
+    });
+  }
+
+  return { ok: true, feed };
+}
+
 /** A stable key for pairing a feed match with one of ours. */
 function pairKey(home: string, away: string): string {
   return `${home}|${away}`;
