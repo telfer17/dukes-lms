@@ -1,0 +1,130 @@
+// The two groups, their order, and the words for them.
+//
+// /board and /grid both render this split, so it is tested once here rather
+// than twice by eye. The ranking is the part worth pinning: an eliminated row's
+// only remaining information is HOW FAR IT GOT, and sorting that column
+// alphabetically throws it away.
+
+import { describe, expect, it } from "vitest";
+import {
+  ELIMINATED_HEADING,
+  NO_ELIMINATIONS_LINE,
+  noStandingLine,
+  rankEliminated,
+  rankStanding,
+  splitStandings,
+  standingHeading,
+} from "@/lib/standings";
+
+type Row = {
+  name: string;
+  status: "active" | "eliminated" | "winner";
+  eliminatedRound: number | null;
+};
+
+const alive = (name: string): Row => ({
+  name,
+  status: "active",
+  eliminatedRound: null,
+});
+const won = (name: string): Row => ({
+  name,
+  status: "winner",
+  eliminatedRound: null,
+});
+const out = (name: string, round: number | null): Row => ({
+  name,
+  status: "eliminated",
+  eliminatedRound: round,
+});
+
+describe("rankStanding", () => {
+  it("pins the winner first, then everyone else alphabetically", () => {
+    const rows = rankStanding([alive("Cat"), won("Zoe"), alive("Ann")]);
+    expect(rows.map((r) => r.name)).toEqual(["Zoe", "Ann", "Cat"]);
+  });
+
+  it("keeps a multi-entry winner's entries together at the top", () => {
+    // One person, two surviving entries — both belong above the field.
+    const rows = rankStanding([alive("Ann"), won("Zoe"), won("Zoe")]);
+    expect(rows.map((r) => r.name)).toEqual(["Zoe", "Zoe", "Ann"]);
+  });
+
+  it("is plain alphabetical while nobody has won", () => {
+    const rows = rankStanding([alive("Cat"), alive("Ann"), alive("Bob")]);
+    expect(rows.map((r) => r.name)).toEqual(["Ann", "Bob", "Cat"]);
+  });
+});
+
+describe("rankEliminated", () => {
+  it("ranks by how far they got — latest exit first", () => {
+    const rows = rankEliminated([out("Ann", 1), out("Bob", 5), out("Cat", 3)]);
+    expect(rows.map((r) => r.name)).toEqual(["Bob", "Cat", "Ann"]);
+  });
+
+  it("is alphabetical within the same round", () => {
+    const rows = rankEliminated([out("Cat", 4), out("Ann", 4), out("Bob", 4)]);
+    expect(rows.map((r) => r.name)).toEqual(["Ann", "Bob", "Cat"]);
+  });
+
+  it("puts an unrecorded exit round at the bottom, not the top", () => {
+    // Treating "unknown" as round 0 would rank it below a genuine round-one
+    // exit — which is a claim the data does not make.
+    const rows = rankEliminated([out("Ann", null), out("Bob", 1)]);
+    expect(rows.map((r) => r.name)).toEqual(["Bob", "Ann"]);
+  });
+});
+
+describe("splitStandings", () => {
+  it("separates the living from the eliminated and ranks each", () => {
+    const { standing, eliminated } = splitStandings([
+      out("Ann", 2),
+      alive("Cat"),
+      won("Zoe"),
+      out("Bob", 6),
+    ]);
+
+    expect(standing.map((r) => r.name)).toEqual(["Zoe", "Cat"]);
+    expect(eliminated.map((r) => r.name)).toEqual(["Bob", "Ann"]);
+  });
+
+  it("counts a winner among the living, never among the out", () => {
+    const { standing, eliminated } = splitStandings([won("Zoe")]);
+    expect(standing).toHaveLength(1);
+    expect(eliminated).toHaveLength(0);
+  });
+
+  it("handles a wipeout: everyone in the eliminated half", () => {
+    const { standing, eliminated } = splitStandings([
+      out("Ann", 3),
+      out("Bob", 3),
+    ]);
+    expect(standing).toEqual([]);
+    expect(eliminated).toHaveLength(2);
+  });
+
+  it("does not mutate its input", () => {
+    const rows = [out("Ann", 1), alive("Cat"), won("Zoe")];
+    const before = rows.map((r) => r.name);
+    splitStandings(rows);
+    expect(rows.map((r) => r.name)).toEqual(before);
+  });
+});
+
+describe("the shared wording", () => {
+  it("switches the survivors' heading to past tense once it is over", () => {
+    expect(standingHeading(false)).toBe("Still standing");
+    expect(standingHeading(true)).toBe("Made it to the end");
+  });
+
+  it("says where the pot went when a concluded competition has nobody left", () => {
+    // Nobody standing at the end can only be a rollover — a win leaves a winner.
+    expect(noStandingLine(true)).toContain("rolls over");
+    expect(noStandingLine(false)).not.toContain("rolls over");
+  });
+
+  it("names the second group the same way for every screen", () => {
+    expect(ELIMINATED_HEADING).toBe("Eliminated");
+    expect(NO_ELIMINATIONS_LINE).toBe("No one's out yet.");
+  });
+});

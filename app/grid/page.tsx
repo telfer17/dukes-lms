@@ -118,9 +118,6 @@ export default async function GridPage() {
           <PicksGrid
             rows={rows}
             roundLabels={roundLabels}
-            // Once it is over, "still in" is a filter on nobody (a rollover) or
-            // on the winner alone: the whole field is the point.
-            defaultFilter={concluded ? "all" : "in"}
             concluded={concluded}
           />
         </div>

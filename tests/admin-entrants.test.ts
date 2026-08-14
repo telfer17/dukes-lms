@@ -180,6 +180,37 @@ describe("orderForPicking", () => {
     expect(pickBucket("active", false)).toBe("to_pick");
     expect(pickBucket("active", true)).toBe("picked");
   });
+
+  it("splits cleanly into the weekly work and the folded-away rest", () => {
+    // /admin/entrants renders the two work blocks in the open list and folds
+    // the 'out' bucket into a collapsed section. Every row must land in exactly
+    // one of those, or somebody disappears off the screen entirely.
+    const ordered = orderForPicking([
+      row("Zoe", true),
+      row("Adam", false, "eliminated"),
+      row("Ben", false),
+      row("Cara", true, "winner"),
+    ]);
+
+    const working = ordered.filter((r) => r.bucket !== "out");
+    const out = ordered.filter((r) => r.bucket === "out");
+
+    expect(working.map((r) => r.name)).toEqual(["Ben", "Zoe"]);
+    expect(out.map((r) => r.name)).toEqual(["Adam", "Cara"]);
+    expect(working.length + out.length).toBe(ordered.length);
+  });
+
+  it("counts only ACTIVE entries as still to pick", () => {
+    // The "N of M haven't picked" chase count: an eliminated entry can never
+    // pick, so counting it would send the organiser after someone who is out.
+    const ordered = orderForPicking([
+      row("Ben", false),
+      row("Adam", false, "eliminated"),
+      row("Ivy", false, "eliminated"),
+    ]);
+
+    expect(ordered.filter((r) => r.bucket === "to_pick")).toHaveLength(1);
+  });
 });
 
 describe("findDuplicateEntrant", () => {
