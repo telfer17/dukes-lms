@@ -203,24 +203,13 @@ export async function getPicksForRound(roundId: string): Promise<PickRow[]> {
   return data ?? [];
 }
 
-/**
- * Any SETTLED round using this matchday. A fixture whose matchday has been
- * settled must not have its result changed underneath the players — their
- * eliminations were already computed from the old value.
- */
-export async function getSettledRoundForMatchday(
-  matchday: number
-): Promise<RoundRow | null> {
-  const { data, error } = await supabaseServer
-    .from("rounds")
-    .select(ROUND_COLS)
-    .eq("matchday", matchday)
-    .eq("status", "settled")
-    .limit(1)
-    .maybeSingle<RoundRow>();
-  if (error) fail("settled round lookup failed", error.message);
-  return data ?? null;
-}
+// The "is this matchday already settled?" guard used to live here as a read,
+// with the write that depended on it happening afterwards over a separate
+// connection. That gap is exactly what let a settle land between the check and
+// the write. It now lives INSIDE the settlement lock, in lms_set_fixture_result
+// and lms_apply_fixture_results (db/settlement-fn.sql), where the check and the
+// write share a transaction. Reading it out here again would just reintroduce
+// the race in a place that looks safe.
 
 export type FixtureRow = Fixture & { kickoff: string };
 

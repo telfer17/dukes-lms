@@ -1,11 +1,9 @@
-// TODO (before go-live): repoint this at the entries model.
-// It still looks a person up by phone and shows their NAME only, which is a
-// leftover from the World Cup predictor's single-entry world. What it should do
-// is: phone -> that person's entries in the ACTIVE competition -> their private
-// pick links (/pick/[entryId]), so someone who lost their link can recover it
-// without the organiser digging it out. Entry itself is organiser-mediated now
-// (admin adds entrants against a competition), so this page must never offer
-// self-signup. Not rebuilt in Phase 5 — deliberately left as-is.
+// Link recovery, not sign-up. Phone number -> that person's entries in the
+// ACTIVE competition -> their private /pick/[entryId] links, so someone who
+// lost their link gets it back without the organiser digging it out. Entry is
+// organiser-mediated (an admin adds entrants against a competition), so this
+// page deliberately offers no self-signup. The lookup itself runs server-side
+// on the secret key in app/api/find-entry/route.ts.
 
 import Image from "next/image";
 import Link from "next/link";
@@ -32,7 +30,8 @@ export default function FindPage() {
       />
       <h1 className="mt-6 text-3xl font-bold tracking-tight">Find my entry</h1>
       <p className="mt-2 text-gray-600">
-        Enter the phone number you gave your club contact to check your entry.
+        Lost your pick link? Enter the phone number you gave your club contact
+        and we&apos;ll bring it back.
       </p>
       <FindEntryForm />
       </div>

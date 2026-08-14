@@ -86,3 +86,55 @@ It **only fills results** — settlement stays manual. It never overwrites a
 result already entered, skips fixtures whose round is already settled, reports
 postponements rather than writing them, and refuses to guess an unrecognised
 club name. See `.env.example` for `CRON_SECRET` and `API_FOOTBALL_KEY`.
+
+
+## Settlement (hardening pass)
+
+**Settling a round is one Postgres transaction.** `db/settlement-fn.sql` holds
+the functions — paste it into the Supabase SQL editor **after**
+`db/lms-schema.sql`. It is re-runnable.
+
+The shape is **plan → validate → apply**:
+
+1. `settleCurrentRound` (`app/admin/results/actions.ts`) reads the state and
+   computes the whole settlement with the pure engine — `lib/lms.ts` via
+   `lib/settlement-plan.ts`. No rule is ever expressed in SQL.
+2. `lms_settle_round(plan)` proves the database still matches the plan's
+   fingerprints — same round, same fixtures, same picks, same active entries —
+   and then applies everything atomically.
+3. Anything moved underneath → it applies **nothing** and says which fingerprint
+   failed. The organiser re-runs and a fresh plan is built.
+
+There is no longer a half-applied settlement to recover from, so the old
+self-heal for a half-applied win is gone.
+
+**One lock across every write path.** `lms_settle_round`,
+`lms_apply_fixture_results` (the results cron) and `lms_set_fixture_result` (the
+manual editor) all take the same transaction-scoped advisory lock as their first
+act, and re-check their settled-round guards *inside* the transaction. Reading
+"is this round settled?" and writing afterwards over two connections is a gap a
+settle can land in; this closes it. All three functions are revoked from
+`anon`/`authenticated` and granted only to `service_role`.
+
+### Running the integration suite
+
+`tests/db/` exercises the real schema and the real functions against a real
+Postgres: full lifecycle, won/rollover/provisional endings, re-settle refusal,
+rollback of a transaction that fails at COMMIT, and cron-vs-settlement lock
+contention in both directions.
+
+```bash
+./scripts/scratch-db.sh test     # spins up a disposable local cluster, runs everything
+```
+
+or point it at any throwaway database:
+
+```bash
+LMS_TEST_DATABASE_URL=postgres://... npm test
+```
+
+Without `LMS_TEST_DATABASE_URL` the suite **reports itself skipped** (with a
+warning saying why) rather than passing silently. Everything else — including
+the engine and the plan builder — stays pure and needs no database.
+
+**Point this only at a scratch database.** Every test truncates first.

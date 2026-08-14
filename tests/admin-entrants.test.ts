@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { groupEntries, type EntryRecord } from "@/lib/admin-entrants";
+import {
+  findDuplicateEntrant,
+  groupEntries,
+  type EntryRecord,
+  type ExistingEntrant,
+} from "@/lib/admin-entrants";
 
 function entry(
   overrides: Partial<EntryRecord> & { id: string }
@@ -110,5 +115,81 @@ describe("groupEntries", () => {
     );
     expect(groups.map((g) => g.clubContact)).toEqual(["Alice", "Bob"]);
     expect(groups[1].entries.map((e) => e.name)).toEqual(["Amy", "Zoe"]);
+  });
+});
+
+describe("findDuplicateEntrant", () => {
+  const existing: ExistingEntrant[] = [
+    { participantId: "p1", name: "David Smith", phone: "07123456789" },
+    { participantId: "p2", name: "Jo Bloggs", phone: null },
+  ];
+
+  it("finds nothing for a genuinely new person", () => {
+    expect(
+      findDuplicateEntrant(
+        { participantId: null, name: "Ann Other", phone: "07999999999" },
+        existing
+      )
+    ).toBeNull();
+  });
+
+  it("matches a name regardless of case or surrounding space", () => {
+    expect(
+      findDuplicateEntrant(
+        { participantId: null, name: "  david smith ", phone: null },
+        existing
+      )
+    ).toMatchObject({ participantId: "p1" });
+  });
+
+  it("matches a phone number written a different way", () => {
+    expect(
+      findDuplicateEntrant(
+        { participantId: null, name: "Someone Else", phone: "+44 7123 456789" },
+        existing
+      )
+    ).toMatchObject({ participantId: "p1" });
+  });
+
+  it("matches the person picked from the existing-people list", () => {
+    expect(
+      findDuplicateEntrant(
+        { participantId: "p2", name: "", phone: null },
+        existing
+      )
+    ).toMatchObject({ participantId: "p2" });
+  });
+
+  it("does not treat two missing phone numbers as the same number", () => {
+    expect(
+      findDuplicateEntrant(
+        { participantId: null, name: "Ann Other", phone: null },
+        existing
+      )
+    ).toBeNull();
+    expect(
+      findDuplicateEntrant(
+        { participantId: null, name: "Ann Other", phone: "" },
+        [{ participantId: "p3", name: "Someone", phone: "" }]
+      )
+    ).toBeNull();
+  });
+
+  it("does not treat two blank names as the same person", () => {
+    expect(
+      findDuplicateEntrant(
+        { participantId: null, name: "", phone: "07000000000" },
+        [{ participantId: "p3", name: "", phone: null }]
+      )
+    ).toBeNull();
+  });
+
+  it("finds nothing in an empty competition", () => {
+    expect(
+      findDuplicateEntrant(
+        { participantId: "p1", name: "David Smith", phone: "07123456789" },
+        []
+      )
+    ).toBeNull();
   });
 });
