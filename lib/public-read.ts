@@ -6,12 +6,15 @@
 // this data, so the two screens can never disagree about who is still in or
 // when the next deadline is.
 //
-// NOTHING here selects entries.id. That uuid is the entire credential for
-// /pick/[entryId], and a React `key` is serialised into the RSC payload — so
-// keying a public list off it publishes every player's pick link in the page
-// source. The board keys off name+index instead. The view no longer exposes
-// the column either (db/lms-schema.sql); this is the second lock on the same
-// door, and tests/public-read.test.ts fails if it is ever put back.
+// NOTHING here selects entries.id. That uuid names an entry to every write
+// path there is, and a React `key` is serialised into the RSC payload — so
+// keying a public list off it publishes the internal id of every entry in the
+// page source. (It was worse still when /pick/[entryId] existed and the id was
+// literally the credential for changing that entry's pick; that page is gone,
+// the reason to keep the id private is not.) The board keys off name+index
+// instead. The view no longer exposes the column either (db/lms-schema.sql);
+// this is the second lock on the same door, and tests/public-read.test.ts
+// fails if it is ever put back.
 //
 // Each helper returns Supabase's own { data, error } shape rather than
 // throwing: a failed read must render as "can't load right now", never as an

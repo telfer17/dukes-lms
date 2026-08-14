@@ -1,8 +1,8 @@
 // What the public picks grid hands to the browser.
 //
 // The inputs hold entry ids, participant ids, phone numbers and payment
-// amounts. The output must hold none of them: entries.id is the credential for
-// /pick/[entryId], and anything on a component's props is serialised into the
+// amounts. The output must hold none of them: entries.id names an entry to
+// every write path, and anything on a component's props is serialised into the
 // RSC payload whether or not it is rendered. So the whole projected structure
 // is stringified and searched for the private values, not just spot-checked
 // field by field.

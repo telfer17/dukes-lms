@@ -277,12 +277,17 @@ export default async function Home() {
             See who&apos;s still in
           </Link>
           <Link
-            href="/find"
+            href="/grid"
             className="rounded-md border-2 border-blue-600 px-6 py-3 font-semibold text-blue-600 hover:bg-blue-50"
           >
-            Lost your pick link?
+            This round&apos;s picks
           </Link>
         </div>
+
+        <p className="mx-auto mt-6 max-w-lg text-sm text-gray-600">
+          Picks go through your club contact — get yours to them before the
+          deadline and they&apos;ll put it in for you.
+        </p>
       </section>
 
       {/* ---- How it works ---- */}
@@ -308,10 +313,11 @@ export default async function Home() {
             the club. The pot is winner-takes-all — no second or third places.
           </p>
           <p className="mt-2 text-sm text-gray-600">
-            Entries go through the organiser: message your club contact and
-            you&apos;ll get a personal pick link back. You can take more than one
-            entry, as long as you pay a full entry for each — they run completely
-            independently of each other.
+            Entries and picks both go through the organiser: message your club
+            contact to get in, then tell them your team each round before the
+            deadline. You can take more than one entry, as long as you pay a
+            full entry for each — they run completely independently of each
+            other.
           </p>
         </div>
 

@@ -1,11 +1,11 @@
 // The public board's column list is a security boundary, not a preference.
 //
-// entries.id is the entire credential for /pick/[entryId] — hold it and you can
-// change that entry's pick. It must never be fetched by anything that renders a
-// public page, because a React `key` is serialised into the RSC payload: keying
-// the board off the entry id publishes every player's pick link in the page
-// source of /board, readable by anyone who opens it. (Reproduced against a dev
-// render before this guard existed.)
+// entries.id is the handle every write path in the app takes. It must never be
+// fetched by anything that renders a public page, because a React `key` is
+// serialised into the RSC payload: keying the board off the entry id publishes
+// every entry's internal id in the page source of /board, readable by anyone
+// who opens it. (Reproduced against a dev render before this guard existed,
+// when that id was also the credential for the since-deleted /pick/[entryId].)
 //
 // This test pins the column list rather than the rendering, because the column
 // list is the one place the id could re-enter: put `entry_id` back in the select

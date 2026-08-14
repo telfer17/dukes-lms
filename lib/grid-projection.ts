@@ -6,8 +6,8 @@
 // THE PROJECTION IS THE SECURITY BOUNDARY. The inputs carry entry ids,
 // participant ids, phone numbers and payment amounts; the output carries a
 // name, a status, an elimination round and per-round { team, outcome, auto }.
-// entries.id in particular is the whole credential for /pick/[entryId], and a
-// value that reaches props reaches the RSC payload even if nothing renders it —
+// entries.id in particular names an entry to every write path, and a value
+// that reaches props reaches the RSC payload even if nothing renders it —
 // that is how the board leaked entry ids through a React `key`. So ids are used
 // to join here and are dropped on the way out, by construction: the row type
 // has nowhere to put one.

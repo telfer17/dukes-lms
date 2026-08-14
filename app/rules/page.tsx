@@ -143,11 +143,9 @@ export default function RulesPage() {
           like. After it, nothing can be changed.
         </p>
         <p>
-          Your pick link is personal to your entry. Lost it?{" "}
-          <Link href="/find" className="text-blue-600 hover:underline">
-            Get it back here
-          </Link>
-          .
+          Picks go through the organiser. Get yours to your club contact before
+          the deadline — by text, in person, however suits — and they enter it
+          for you. There is no pick page to log into and nothing to lose.
         </p>
       </Section>
 
@@ -183,7 +181,7 @@ export default function RulesPage() {
         <p>
           You then live or die by that team exactly as if you had picked it
           yourself, and it counts as used. An auto-assigned pick is shown as
-          &ldquo;auto&rdquo; on your pick page and on the board.
+          &ldquo;auto&rdquo; on the picks grid and on the board.
         </p>
         <p>
           If you hold more than one entry and miss both, each entry gets its own

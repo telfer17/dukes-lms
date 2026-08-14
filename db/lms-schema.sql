@@ -442,10 +442,11 @@ create index if not exists fixtures_away_team_idx      on fixtures (away_team_id
 -- so this keeps working after the REVOKEs below strip anon's access to the base
 -- tables — the same pattern the World Cup predictor used.
 --
--- entries.id is DELIBERATELY not here. It is the whole credential for
--- /pick/[entryId] — anyone holding it can change that entry's pick — so it must
--- never be reachable with a key that is safe to publish. The board has no use
--- for it either: it renders names and statuses, and React keys off name+index.
+-- entries.id is DELIBERATELY not here. It names an entry to every write path
+-- in the app (and was, until the pick process was streamlined, the whole
+-- credential for a player-facing /pick/[entryId] page), so it must never be
+-- reachable with a key that is safe to publish. The board has no use for it
+-- either: it renders names and statuses, and React keys off name+index.
 --
 -- The drop-then-create is what lets that column be REMOVED on a re-run:
 -- `create or replace view` can add trailing columns but cannot drop one. The
@@ -478,9 +479,13 @@ comment on view standing_board is
 -- Public (publishable key)  : teams, fixtures, rounds, competitions, standing_board
 -- Secret key only           : participants, entries, picks
 --
--- picks are secret-key-only on purpose: revealing them before a round locks
--- would let latecomers copy. A public picks view can be added in a later phase
--- once it can filter on rounds.status <> 'pending'.
+-- picks are secret-key-only for the IDS THEY CARRY, not for the picks. There is
+-- no secrecy rule (docs/LMS-RULES.md): a pick is public the moment it is made,
+-- /board says so in as many words, and /grid shows the current round's picks
+-- while it is still open. What must not leak is entry_id — the handle every
+-- write path takes — so the grid reads with the secret key and PROJECTS names
+-- and teams out (app/grid/page.tsx, lib/grid-projection.ts) rather than
+-- granting anon a view over this table.
 -- ----------------------------------------------------------------------------
 revoke all on participants from anon, authenticated;
 revoke all on entries      from anon, authenticated;

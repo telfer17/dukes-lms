@@ -10,8 +10,9 @@ anyone does is tap the link. Paste the link on its own line so WhatsApp picks
 up the share card (`public/og-image.png`).
 
 Facts here must match [`LMS-RULES.md`](LMS-RULES.md) and `/rules` on the site:
-£10 entry, 50/50 split, entry through the organiser, round 1 locks at the first
-kick-off of matchday 1 — **Friday 21 August, 20:00** (Arsenal v Coventry City).
+£10 entry, 50/50 split, entry **and picks** through the organiser (players have
+no pick page of their own), round 1 locks at the first kick-off of matchday 1 —
+**Friday 21 August, 20:00** (Arsenal v Coventry City).
 
 ---
 
@@ -26,8 +27,9 @@ kick-off of matchday 1 — **Friday 21 August, 20:00** (Arsenal v Coventry City)
 > **£10 to enter** — a fiver into the prize pot, a fiver to the club. Take as
 > many entries as you like, £10 each, and every entry runs on its own.
 >
-> **To get in:** message <ORGANISER>. You'll get a personal link back — that's
-> where you make your pick each week, and it's yours alone, so don't share it.
+> **To get in:** message <ORGANISER>. Then every week just tell them your team
+> — text, WhatsApp, or grab them at the bar — and they'll put it in for you.
+> There's nothing to log into.
 >
 > **Round 1 locks Friday 21 August at 8pm**, the first kick-off of the season.
 > No pick by then and a team gets picked for you, so don't sweat it if you're
@@ -45,5 +47,5 @@ kick-off of matchday 1 — **Friday 21 August, 20:00** (Arsenal v Coventry City)
 > ⏳ Last call for **Dukes — Last Man Standing** — round 1 locks tomorrow at
 > 8pm when Arsenal v Coventry kicks off. £10 to enter, message <ORGANISER>.
 >
-> Already in but lost your pick link? Get it back here:
-> <SITE URL>/find
+> Already in? Get your team to <ORGANISER> before 8pm and they'll put it in
+> for you. See who's picked what here: <SITE URL>/grid

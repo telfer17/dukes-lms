@@ -1,10 +1,16 @@
-// The rules both pick paths share.
+// The rules every pick goes through.
 //
-// The organiser's /admin/picks entry point exists so a player who texts their
-// pick in still gets one. It must NOT become a way round the competition's
-// rules — the only thing it may relax is the deadline. These tests pin that:
-// every rejection except deadline_passed applies identically with the override
-// on and off, checked by running the same attempt both ways.
+// The organiser's entry point (/admin/entrants) is now the ONLY door: players
+// have no pick page of their own. It must NOT become a way round the
+// competition's rules — the only thing it may relax is the deadline. These
+// tests pin that: every rejection except deadline_passed applies identically
+// with the override on and off, checked by running the same attempt both ways.
+//
+// The allowAfterDeadline:false side is deliberately still exercised even
+// though no caller passes it today. It is what the rule MEANS — the assertions
+// below are the difference between "the deadline is a rule" and "the deadline
+// is whatever the one caller happens to ask for" — and it is what a
+// before-the-deadline door would need if one is ever added back.
 
 import { describe, expect, it } from "vitest";
 import type { Fixture, Team } from "@/lib/lms";

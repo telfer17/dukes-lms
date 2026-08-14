@@ -19,19 +19,10 @@ export default function AdminDashboard() {
           href="/admin/entrants"
           className="rounded-md border border-gray-200 p-5 hover:border-blue-400 hover:bg-blue-50"
         >
-          <h2 className="font-semibold">Entrants & payments</h2>
+          <h2 className="font-semibold">Entrants</h2>
           <p className="mt-2 text-sm text-gray-600">
-            Add entries, track who has paid, and hand out pick links.
-          </p>
-        </Link>
-        <Link
-          href="/admin/picks"
-          className="rounded-md border border-gray-200 p-5 hover:border-blue-400 hover:bg-blue-50"
-        >
-          <h2 className="font-semibold">Enter picks</h2>
-          <p className="mt-2 text-sm text-gray-600">
-            Put in a pick for anyone who phones or texts theirs in, and see who
-            hasn&apos;t picked yet.
+            Add entries, track who has paid, enter this round&apos;s picks, and
+            see who hasn&apos;t picked yet.
           </p>
         </Link>
         <Link

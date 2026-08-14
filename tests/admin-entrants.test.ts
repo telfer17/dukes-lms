@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   findDuplicateEntrant,
   groupEntries,
+  orderForPicking,
+  pickBucket,
   type EntryRecord,
   type ExistingEntrant,
 } from "@/lib/admin-entrants";
@@ -115,6 +117,68 @@ describe("groupEntries", () => {
     );
     expect(groups.map((g) => g.clubContact)).toEqual(["Alice", "Bob"]);
     expect(groups[1].entries.map((e) => e.name)).toEqual(["Amy", "Zoe"]);
+  });
+});
+
+// The merged /admin/entrants list is worked top-down on a phone, so the order
+// IS the workflow: the people who still owe a pick have to be the first thing
+// on screen, and eliminated entries must never sit among them.
+describe("orderForPicking", () => {
+  const row = (
+    name: string,
+    hasPick: boolean,
+    status: EntryRecord["status"] = "active"
+  ) => ({ name, hasPick, status });
+
+  it("puts entries with no pick first, then picked, then out", () => {
+    const ordered = orderForPicking([
+      row("Zoe", true),
+      row("Adam", false, "eliminated"),
+      row("Ben", false),
+      row("Chris", true),
+      row("Dave", false),
+    ]);
+    expect(ordered.map((r) => r.name)).toEqual([
+      "Ben",
+      "Dave",
+      "Chris",
+      "Zoe",
+      "Adam",
+    ]);
+    expect(ordered.map((r) => r.bucket)).toEqual([
+      "to_pick",
+      "to_pick",
+      "picked",
+      "picked",
+      "out",
+    ]);
+  });
+
+  it("sorts alphabetically within each block", () => {
+    const ordered = orderForPicking([
+      row("Charlie", false),
+      row("alice", false),
+      row("Bob", false),
+    ]);
+    expect(ordered.map((r) => r.name)).toEqual(["alice", "Bob", "Charlie"]);
+  });
+
+  it("does not mutate its input", () => {
+    const input = [row("Zoe", true), row("Adam", false)];
+    const snapshot = input.map((r) => r.name);
+    orderForPicking(input);
+    expect(input.map((r) => r.name)).toEqual(snapshot);
+  });
+
+  it("never offers a pick block to an entry that is out, picked or not", () => {
+    // A winner has a pick for the round they won in; an eliminated entry may
+    // have one too. Neither may be given another, so neither belongs in the
+    // work list.
+    expect(pickBucket("winner", true)).toBe("out");
+    expect(pickBucket("winner", false)).toBe("out");
+    expect(pickBucket("eliminated", false)).toBe("out");
+    expect(pickBucket("active", false)).toBe("to_pick");
+    expect(pickBucket("active", true)).toBe("picked");
   });
 });
 

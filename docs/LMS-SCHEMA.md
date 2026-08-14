@@ -243,10 +243,11 @@ The public "who's still in" view. Columns: `competition_id`, `name`, `status`,
 runs with its owner's privileges — the same trick the World Cup
 `participant_points` view used.
 
-`entries.id` was removed from this view during the launch review. It is the
-whole credential for `/pick/[entryId]`, so anything holding it can change that
-entry's pick; a column readable with the publishable key is the wrong place for
-it. The board never needed it — it renders names and statuses and keys off
+`entries.id` was removed from this view during the launch review. It names an
+entry to every write path in the app — and at the time it was also the whole
+credential for `/pick/[entryId]`, since removed — so a column readable with the
+publishable key is the wrong place for it. The board never needed it — it
+renders names and statuses and keys off
 name+index (`lib/public-read.ts`, `tests/public-read.test.ts`). Because
 `create or replace view` cannot drop a column, the schema now does
 `drop view if exists standing_board` first; the file stays re-runnable, and the
