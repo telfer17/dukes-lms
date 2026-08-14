@@ -84,11 +84,17 @@ function Cell({ cell, dead }: { cell: GridCell | null; dead: boolean }) {
 export default function PicksGrid({
   rows,
   roundLabels,
+  defaultFilter = "in",
+  concluded = false,
 }: {
   rows: GridRow[];
   roundLabels: string[];
+  /** Which rows to open on. A finished competition opens on everyone. */
+  defaultFilter?: Filter;
+  /** Past tense: "still in" is not a thing once the competition is over. */
+  concluded?: boolean;
 }) {
-  const [filter, setFilter] = useState<Filter>("in");
+  const [filter, setFilter] = useState<Filter>(defaultFilter);
 
   const aliveCount = useMemo(
     () => rows.filter((r) => r.status !== "eliminated").length,
@@ -112,7 +118,7 @@ export default function PicksGrid({
         >
           {(
             [
-              ["in", `Still in (${aliveCount})`],
+              ["in", `${concluded ? "Made it" : "Still in"} (${aliveCount})`],
               ["all", `Everyone (${rows.length})`],
             ] as [Filter, string][]
           ).map(([value, label]) => (
@@ -199,7 +205,9 @@ export default function PicksGrid({
       {visible.length === 0 && (
         <p className="mt-4 rounded-md border border-gray-200 p-6 text-center text-gray-500">
           {filter === "in"
-            ? "Nobody is still in — the competition rolled over."
+            ? concluded
+              ? "Nobody made it to the end — everyone went out."
+              : "Nobody is still in — the competition rolled over."
             : "No entries yet."}
         </p>
       )}

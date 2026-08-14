@@ -96,6 +96,46 @@ export async function getCompetition(id: string): Promise<CompetitionRow | null>
   return data ?? null;
 }
 
+/**
+ * Competitions that are over, newest first — the history behind the concluded
+ * public view and the admin's read-only list. 'active' is deliberately absent:
+ * this answers "what has already happened", never "what is running".
+ */
+export async function getConcludedCompetitions(
+  limit = 10
+): Promise<CompetitionRow[]> {
+  const { data, error } = await supabaseServer
+    .from("competitions")
+    .select(COMPETITION_COLS)
+    .in("status", ["won", "rolled_over"])
+    .order("created_at", { ascending: false })
+    .limit(limit)
+    .returns<CompetitionRow[]>();
+  if (error) fail("concluded competitions lookup failed", error.message);
+  return data ?? [];
+}
+
+/**
+ * Names for a set of participant ids. Participants are secret-key-only (they
+ * carry phone numbers), so this is the only way a winner's ID becomes a winner's
+ * name. Ids with no row are simply absent from the map — the caller decides
+ * whether that is worth saying out loud.
+ */
+export async function getParticipantNames(
+  ids: string[]
+): Promise<Map<string, string>> {
+  const wanted = [...new Set(ids.filter(Boolean))];
+  if (wanted.length === 0) return new Map();
+
+  const { data, error } = await supabaseServer
+    .from("participants")
+    .select("id, name")
+    .in("id", wanted)
+    .returns<{ id: string; name: string }[]>();
+  if (error) fail("participant name lookup failed", error.message);
+  return new Map((data ?? []).map((p) => [p.id, p.name]));
+}
+
 /** All 20 clubs, alphabetical. */
 export async function getTeams(): Promise<Team[]> {
   const { data, error } = await supabaseServer

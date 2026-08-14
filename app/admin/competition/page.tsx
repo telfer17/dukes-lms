@@ -4,7 +4,9 @@ import { formatPence } from "@/lib/competition";
 import {
   currentRound,
   getActiveCompetition,
+  getConcludedCompetitions,
   getLoadedMatchdays,
+  getParticipantNames,
   getRounds,
   type CompetitionRow,
   type RoundRow,
@@ -35,11 +37,21 @@ export default async function CompetitionAdminPage() {
   let rounds: RoundRow[] = [];
   let loadedMatchdays: number[] = [];
   let loadError: string | null = null;
+  // History: what has already finished, newest first. Read-only — there is no
+  // action on this page that touches a competition that is already over.
+  let history: CompetitionRow[] = [];
+  let winnerNames = new Map<string, string>();
 
   try {
     competition = await getActiveCompetition();
     loadedMatchdays = await getLoadedMatchdays();
     if (competition) rounds = await getRounds(competition.id);
+    history = await getConcludedCompetitions();
+    winnerNames = await getParticipantNames(
+      history
+        .map((c) => c.winner_participant_id)
+        .filter((id): id is string => id !== null)
+    );
   } catch (e) {
     console.error("competition admin load failed:", e);
     loadError = "Could not read the competition tables.";
@@ -247,6 +259,42 @@ export default async function CompetitionAdminPage() {
               </div>
             </>
           )}
+        </section>
+      )}
+
+      {/* ---------------- Previous competitions ---------------- */}
+      {history.length > 0 && (
+        <section className="mt-8">
+          <h2 className="text-lg font-semibold">Previous competitions</h2>
+          <p className="mt-1 text-sm text-gray-600">
+            Finished competitions, newest first. Nothing here can be edited —
+            they are the record, and the public pages still show the most recent
+            one whenever nothing is active.
+          </p>
+          <ul className="mt-3 divide-y divide-gray-200 overflow-hidden rounded-md border border-gray-200">
+            {history.map((c) => (
+              <li
+                key={c.id}
+                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 p-3 text-sm"
+              >
+                <span className="font-medium">{c.label}</span>
+                <span className="text-gray-600">
+                  {c.status === "won" ? (
+                    <>
+                      Won by{" "}
+                      <span className="font-semibold text-gray-900">
+                        {(c.winner_participant_id &&
+                          winnerNames.get(c.winner_participant_id)) ||
+                          "unknown"}
+                      </span>
+                    </>
+                  ) : (
+                    "Rolled over — no winner"
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
     </main>
