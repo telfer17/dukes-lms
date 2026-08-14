@@ -51,8 +51,8 @@
 --
 -- A third path used to exist here: lms_apply_fixture_results, the auto-results
 -- cron's batch write. The integration was removed before launch (see the README)
--- and so is its function. If your database was set up before that, drop it once:
---   drop function if exists lms_apply_fixture_results(jsonb, text);
+-- and so is its function — this file drops it, so a database set up before the
+-- removal converges by re-running the file like any other change.
 --
 -- SECURITY
 -- --------
@@ -456,17 +456,26 @@ comment on function lms_set_fixture_result(int, text, text) is
 
 
 -- ----------------------------------------------------------------------------
+-- Removed objects.
+--
+-- lms_apply_fixture_results was the auto-results cron's batch write; the
+-- integration was removed before launch, so the function goes too — executably,
+-- because this file's contract is that pasting the whole thing converges the
+-- database. Both signatures: the two-argument version this file last shipped,
+-- and the original single-argument one, in case a database predates that.
+-- No-ops on a database that never had them, so the file stays re-runnable.
+-- ----------------------------------------------------------------------------
+drop function if exists lms_apply_fixture_results(jsonb, text);
+drop function if exists lms_apply_fixture_results(jsonb);
+
+
+-- ----------------------------------------------------------------------------
 -- Grants.
 --
 -- Postgres grants EXECUTE on a new function to PUBLIC by default, which with
 -- Supabase's setup would make all three callable with the publishable (anon)
 -- key. Revoke, then grant to service_role only — the secret key used by
 -- lib/supabase-server.ts.
---
--- Re-running this file does NOT drop lms_apply_fixture_results from a database
--- that already has it (the auto-results cron this file used to serve was
--- removed before launch). Drop it by hand, once:
---   drop function if exists lms_apply_fixture_results(jsonb, text);
 -- ----------------------------------------------------------------------------
 revoke all on function lms_lock_key()                          from public, anon, authenticated;
 revoke all on function lms_settle_round(jsonb)                 from public, anon, authenticated;

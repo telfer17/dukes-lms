@@ -518,6 +518,26 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
 
   // =========================================================================
   // The lock: fixture writes vs settlement
+  //
+  // NOT TESTED HERE, deliberately: concurrent contention on the lock. This
+  // block used to hold three tests that drove two connections against each
+  // other — settlement blocking on an in-flight cron write, the cron blocking
+  // on an in-flight settlement, and the cron's bounded wait returning BUSY
+  // having written nothing. They went with the auto-results cron when it was
+  // removed before launch, and that was a disclosed coverage decision, not an
+  // oversight.
+  //
+  // The reasoning: the lock lost its only UNATTENDED caller. The two writers
+  // left are both admin buttons someone is watching, both waiting unbounded, so
+  // contention resolves as "the second press waits a moment" — and the BUSY
+  // protocol a contention test would assert no longer exists to assert. What
+  // does still matter is the guard that outlives the wait, which the test below
+  // covers: once a round is settled, a fixture write is refused rather than
+  // landing in a round whose eliminations are already computed.
+  //
+  // Orchestrating multiple connections to simulate one organiser racing
+  // themselves would cost more than it protects. If an unattended writer is
+  // ever reintroduced, restore those tests from git history alongside it.
   // =========================================================================
 
   describe("manual result writes and settlement cannot interleave", () => {

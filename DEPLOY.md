@@ -23,11 +23,13 @@ verification to run afterwards.
       *(Verified on a fresh database: all four apply cleanly in that order,
       `verify-fixtures` gives 9 PASS / 0 FAIL, and re-running the schema leaves
       the 380 fixtures and 20 teams untouched.)*
-- [ ] **If you already ran `db/lms-schema.sql` before this deploy, run it
-      again.** The launch review removed `entries.id` from the public
-      `standing_board` view — that uuid is the pick-link credential and must not
-      be readable with the publishable key. The file drops and recreates the
-      view, re-applies the grants, and touches no data.
+- [ ] **If you already ran the SQL before this deploy, run `db/lms-schema.sql`
+      and `db/settlement-fn.sql` again.** Two things changed since: the launch
+      review removed `entries.id` from the public `standing_board` view (that
+      uuid is the pick-link credential and must not be readable with the
+      publishable key), and auto-results was removed, so `settlement-fn.sql`
+      now drops `lms_apply_fixture_results`. Both files converge a database that
+      predates the change and touch no data.
 
 ## 2. Create the project
 

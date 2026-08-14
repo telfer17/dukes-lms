@@ -83,7 +83,7 @@ Supabase SQL editor **in this order**, and every file is re-runnable:
 | 1 | `db/lms-schema.sql` | Tables, views, constraints, and the grants that keep the anon key to public-safe reads |
 | 2 | `db/seed-fixtures.sql` | The 380 Premier League fixtures. Additive, insert-only, safe to re-run |
 | 3 | `db/verify-fixtures.sql` | Read-only check. **Every row must say `PASS`** |
-| 4 | `db/settlement-fn.sql` | `lms_settle_round`, `lms_apply_fixture_results`, `lms_set_fixture_result` |
+| 4 | `db/settlement-fn.sql` | `lms_lock_key`, `lms_settle_round`, `lms_set_fixture_result` |
 
 Order matters: the seed needs the schema's `teams` rows to resolve club names,
 and the settlement functions reference schema objects. Run step 3 and read the
