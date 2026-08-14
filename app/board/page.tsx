@@ -120,10 +120,15 @@ export default async function BoardPage() {
     console.error("pot computation failed:", e);
   }
 
-  // ---- picks for a LOCKED round may be shown; never for an open one ----
-  let lockedPicks: { name: string; team: string }[] = [];
-  const revealRound =
-    round && !isRoundOpen(round) && round.status !== "settled" ? round : null;
+  // ---- this round's picks ----
+  // Picks are PUBLIC from the moment they are made. They used to be held back
+  // until the deadline passed, on the theory that a latecomer could copy; the
+  // decision was reversed before launch — there is no secrecy rule in
+  // docs/LMS-RULES.md, and /grid shows the same picks, so hiding them here
+  // would only make the two screens disagree. The pick LINK stays private; the
+  // pick does not.
+  let currentPicks: { name: string; team: string }[] = [];
+  const revealRound = round && round.status !== "settled" ? round : null;
   if (revealRound) {
     try {
       const [picks, teams, entries] = await Promise.all([
@@ -135,14 +140,14 @@ export default async function BoardPage() {
       const entryName = new Map(
         entries.map((e) => [e.id, e.participant?.name ?? "—"])
       );
-      lockedPicks = picks
+      currentPicks = picks
         .map((p) => ({
           name: entryName.get(p.entry_id) ?? "—",
           team: teamName.get(p.team_id) ?? "—",
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
     } catch (e) {
-      console.error("locked picks read failed:", e);
+      console.error("current picks read failed:", e);
     }
   }
 
@@ -255,16 +260,18 @@ export default async function BoardPage() {
         />
       )}
 
-      {lockedPicks.length > 0 && (
+      {currentPicks.length > 0 && (
         <section className="mt-8">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
             This round&apos;s picks
           </h2>
           <p className="mt-1 text-xs text-gray-500">
-            Revealed now the round is locked.
+            {round && isRoundOpen(round)
+              ? "Picks show as soon as they're made — and can change until the deadline."
+              : "Locked in."}
           </p>
           <ul className="mt-2 divide-y divide-gray-200 rounded-md border border-gray-200">
-            {lockedPicks.map((p, i) => (
+            {currentPicks.map((p, i) => (
               <li
                 key={`${p.name}-${i}`}
                 className="flex items-center justify-between gap-3 p-3 text-sm"
@@ -275,6 +282,17 @@ export default async function BoardPage() {
             ))}
           </ul>
         </section>
+      )}
+
+      {rounds.length > 0 && (
+        <p className="mt-8 text-center">
+          <Link
+            href="/grid"
+            className="inline-block rounded-md border-2 border-blue-600 px-5 py-2.5 text-sm font-semibold text-blue-600 hover:bg-blue-50"
+          >
+            See everyone&apos;s picks →
+          </Link>
+        </p>
       )}
 
       <p className="mt-10 text-center text-sm text-gray-500">

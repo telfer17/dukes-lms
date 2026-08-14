@@ -23,6 +23,12 @@ export default function NavBar() {
             The board
           </Link>
           <Link
+            href="/grid"
+            className="py-1 text-gray-600 hover:text-gray-900"
+          >
+            Picks
+          </Link>
+          <Link
             href="/rules"
             className="py-1 text-gray-600 hover:text-gray-900"
           >

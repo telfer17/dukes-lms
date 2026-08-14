@@ -1,14 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { availableTeams, teamsPlayingIn } from "@/lib/lms";
+import { validatePick } from "@/lib/pick-rules";
 import {
   getEntry,
   getFixturesForMatchday,
   getPicksForEntry,
   getRounds,
   getTeams,
-  isRoundOpen,
   pickHistoryTeamIds,
 } from "@/lib/lms-db";
 import { supabaseServer } from "@/lib/supabase-server";
@@ -43,20 +42,7 @@ export async function submitPick(
 
   const rounds = await getRounds(entry.competition_id);
   const round = rounds.find((r) => r.id === roundId);
-  if (!round) return { error: "That round doesn't belong to this competition." };
-
-  // Authoritative deadline check: the DB's deadline against server time.
-  if (!isRoundOpen(round)) {
-    return { error: "That round is closed — the deadline has passed." };
-  }
-
-  const fixtures = await getFixturesForMatchday(round.matchday);
-  if (fixtures.length === 0) {
-    return { error: "No fixtures loaded for this matchday yet." };
-  }
-  if (!teamsPlayingIn(fixtures, round.matchday).has(teamId)) {
-    return { error: "That team isn't playing this round." };
-  }
+  const fixtures = round ? await getFixturesForMatchday(round.matchday) : [];
 
   // Availability from the engine, over this entry's own history — excluding any
   // pick already made for THIS round, which is being replaced.
@@ -67,19 +53,42 @@ export async function submitPick(
     roundNumberById
   );
   const teams = await getTeams();
-  if (!availableTeams(history, teams).some((t) => t.id === teamId)) {
-    return { error: "You've already used that team." };
-  }
+
+  // One shared rule set with the organiser's path (lib/pick-rules.ts). The
+  // player never gets the after-deadline override.
+  const verdict = validatePick({
+    entryStatus: entry.status,
+    round,
+    // Always equal here — `round` was looked up BY this id — so it can only
+    // pass. Passed anyway so both callers use the validator identically.
+    submittedRoundId: roundId,
+    fixtures,
+    teams,
+    history,
+    teamId,
+    allowAfterDeadline: false,
+  });
+  if (!verdict.ok) return { error: verdict.error };
 
   // One pick per (entry, round) is a DB constraint — upsert on it so changing a
   // pick before the deadline replaces rather than collides.
   //
-  // Deliberately NOT wrapped in a transactional RPC. The interleave this would
-  // guard against needs a pick landing mid-settlement, and settlement now
-  // refuses to run on an open round while this route refuses to write to a
-  // closed one — so the two can't overlap. Making settlement genuinely atomic
-  // via a Postgres function is scheduled for the pre-season hardening pass,
-  // and this upsert moves inside it at that point.
+  // DELIBERATELY NOT one transaction with the validation above, and the same
+  // disposition as the three earlier transaction findings on this file.
+  //
+  // The residual race is a pick landing between another connection reading the
+  // state and writing it. Settlement is what would be damaged by that, and
+  // settlement defends itself: lms_settle_round takes the advisory lock and
+  // FINGERPRINTS the picks it planned against (db/settlement-fn.sql). A pick
+  // that lands after the plan was computed fails that validation, so the
+  // settle applies nothing and the organiser re-runs against fresh state —
+  // the pick is kept, not lost. In the other direction a pick can never land
+  // against a settled round: validatePick refuses a settled round here, and
+  // settlement re-validates inside its own transaction regardless.
+  //
+  // So the failure mode is a re-run, not a corrupt round. Wrapping this in an
+  // RPC remains the documented pattern (see the settlement functions) if a
+  // reason to need true atomicity ever shows up.
   const { error } = await supabaseServer.from("picks").upsert(
     {
       competition_id: entry.competition_id,

@@ -1,0 +1,83 @@
+name: CI
+
+# Every pull request, and every push to master (so a direct commit or a merge
+# is checked too, not just the PR that preceded it).
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+# A new push supersedes the run in flight for the same branch.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: lint · types · tests · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # ------------------------------------------------------------------
+    # DUMMY VALUES ONLY. There are no real secrets here and none are set in
+    # the repository settings — CI must never hold a key to the live
+    # database or the admin password.
+    #
+    # They exist because `next build` imports lib/supabase-browser.ts and
+    # lib/supabase-server.ts while collecting page data, and both throw at
+    # module scope when a key is missing. The build needs the vars to EXIST,
+    # not to be reachable: every page that touches Supabase is
+    # force-dynamic, so nothing connects while building. Verified — the
+    # build also passes with the URL pointed at a port that refuses
+    # connections (https://127.0.0.1:9), with no network errors logged.
+    #
+    # So: if this workflow ever starts failing on a connection error, that
+    # is a real finding — something now reaches the database at build time —
+    # and the fix is in the app, not a real key here.
+    # ------------------------------------------------------------------
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-dummy.supabase.co
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-dummy-publishable-key
+      SUPABASE_SECRET_KEY: ci-dummy-secret-key
+      ADMIN_PASSWORD: ci-dummy-admin-password
+      # LMS_TEST_DATABASE_URL is deliberately NOT set. Without it the
+      # integration suite in tests/db/ reports itself SKIPPED with a reason
+      # (tests/db-guard.test.ts pins that behaviour) rather than passing
+      # silently or failing. Those tests truncate every table they touch, so
+      # they only ever run against a scratch database someone started on
+      # purpose — see scripts/scratch-db.sh.
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # npm ci, not npm install: installs exactly the lockfile and fails if
+      # package.json and package-lock.json have drifted apart.
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # Ahead of the build, which also typechecks: this fails faster, and it
+      # covers the test files the build never looks at.
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      # Last because it is the slowest, and the one that catches genuine
+      # breaking changes — a bad import or a server/client boundary mistake
+      # compiles fine under tsc and dies here.
+      - name: Build
+        run: npm run build
