@@ -111,8 +111,8 @@ type SettlementResult = {
  * transaction, so the old self-heal for a half-applied win has been deleted
  * along with the state that made it necessary.
  *
- * The RPC also takes the advisory lock that the results cron and the manual
- * result editor take, so a fixture result cannot change mid-settlement.
+ * The RPC also takes the advisory lock the manual result editor takes, so a
+ * fixture result cannot change mid-settlement.
  *
  * The guards below duplicate ones the function repeats inside the transaction.
  * That is on purpose: these produce the exact message an organiser needs, from

@@ -426,8 +426,8 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
       const { competitionId, roundId } = await seedWinnable();
       const stale = plan(await planFromDatabase(db, competitionId, roundId));
 
-      // The cron fills in the postponed game while the organiser was reading
-      // the page. Every outcome in `stale` is now suspect.
+      // Someone enters the postponed game's result while the organiser was
+      // reading the page. Every outcome in `stale` is now suspect.
       await db.sql(
         "update fixtures set status = 'played', result = 'home' where matchday = 1 and status = 'postponed'"
       );
@@ -520,12 +520,12 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
   // The lock: fixture writes vs settlement
   // =========================================================================
 
-  describe("cron and settlement cannot interleave", () => {
+  describe("manual result writes and settlement cannot interleave", () => {
     /**
-     * A matchday where every PICKED fixture has a result, but one unpicked
-     * fixture is still waiting for the cron. That combination is what makes a
-     * race possible at all: the round is settleable AND there is a fixture
-     * write still to come.
+     * A matchday where every PICKED fixture has a result and one unpicked
+     * fixture is still without one. That combination is what makes a race
+     * possible at all: the round is settleable AND there is a fixture write
+     * still to come.
      */
     async function seedContended() {
       const decided = await db.addFixture({
@@ -551,161 +551,6 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
       await db.addPick({ competitionId, entryId: bob, roundId, teamId: team.get("Aston Villa")! });
       return { competitionId, roundId, decided, pendingFixture };
     }
-
-    /** True if `p` has not settled within `ms` — i.e. it is blocked. */
-    async function stillBlocked(p: Promise<unknown>, ms = 400): Promise<boolean> {
-      const timeout = new Promise<"blocked">((resolve) =>
-        setTimeout(() => resolve("blocked"), ms)
-      );
-      // Swallow here only so a rejection does not surface as an unhandled
-      // rejection while we wait; the caller still awaits `p` and sees it.
-      return (await Promise.race([p.then(() => "done" as const, () => "done" as const), timeout])) === "blocked";
-    }
-
-    it("makes settlement WAIT for an in-flight cron write, then refuse safely", async () => {
-      const { competitionId, roundId, pendingFixture } = await seedContended();
-      const stale = plan(await planFromDatabase(db, competitionId, roundId));
-
-      const cron = await TestDb.connect();
-      const settler = await TestDb.connect();
-      try {
-        // The cron starts writing and holds the lock without committing.
-        await cron.sql("begin");
-        await cron.applyFixtureResults([
-          { fixture_id: pendingFixture, home_score: 2, away_score: 0, result: "home" },
-        ]);
-
-        const settling = settler.settle(stale);
-        expect(await stillBlocked(settling)).toBe(true);
-
-        await cron.sql("commit");
-
-        // Settlement was computed against the pre-cron fixtures, so the only
-        // safe answer is to refuse — which is exactly what the fingerprint
-        // check does now that the two could not interleave.
-        expect(await settling).toMatchObject({
-          ok: false,
-          code: "fixtures_changed",
-        });
-        expect(await db.roundStatus(roundId)).toBe("pending");
-
-        // Re-planning against the new state settles cleanly. Nothing was lost.
-        const result = await db.settle(
-          plan(await planFromDatabase(db, competitionId, roundId))
-        );
-        expect(result).toMatchObject({ ok: true, code: "settled" });
-      } finally {
-        await cron.end();
-        await settler.end();
-      }
-    });
-
-    it("makes the cron WAIT for an in-flight settlement, then skip the settled round", async () => {
-      // The hole this closes: the cron reads "round not settled", a settle
-      // commits, and the cron's write then lands a result in a round whose
-      // eliminations were already computed from the old one.
-      const { competitionId, roundId, pendingFixture } = await seedContended();
-      const settlementPlan = plan(await planFromDatabase(db, competitionId, roundId));
-
-      const settler = await TestDb.connect();
-      const cron = await TestDb.connect();
-      try {
-        await settler.sql("begin");
-        expect(await settler.settle(settlementPlan)).toMatchObject({ ok: true });
-
-        const writing = cron.applyFixtureResults([
-          { fixture_id: pendingFixture, home_score: 2, away_score: 0, result: "home" },
-        ]);
-        expect(await stillBlocked(writing)).toBe(true);
-
-        await settler.sql("commit");
-
-        // The guard is re-read INSIDE the cron's transaction, so it now sees
-        // the round the settle just closed.
-        const report = (await writing) as {
-          updated: unknown[];
-          round_settled: { fixture_id: number; round_number: number }[];
-        };
-        expect(report.updated).toEqual([]);
-        expect(report.round_settled).toEqual([
-          { fixture_id: pendingFixture, round_number: 1 },
-        ]);
-
-        // The fixture is untouched — no result was written into a settled round.
-        expect(await db.fixtureRow(pendingFixture)).toMatchObject({
-          status: "scheduled",
-          result: null,
-        });
-        expect(await db.roundStatus(roundId)).toBe("settled");
-      } finally {
-        await settler.end();
-        await cron.end();
-      }
-    });
-
-    it("reports BUSY and writes nothing rather than blocking to a platform timeout", async () => {
-      // The cron is unattended: nobody is waiting on the answer, and blocking
-      // until the function timeout would fail opaquely with no report at all.
-      // It waits a bounded time for the lock and then gives up cleanly.
-      const { pendingFixture } = await seedContended();
-
-      const holder = await TestDb.connect();
-      try {
-        // Stand in for a settlement mid-flight — the lock is what matters here,
-        // not what is holding it.
-        await holder.sql("begin");
-        await holder.sql("select pg_advisory_xact_lock(lms_lock_key())");
-
-        const report = (await db.applyFixtureResults(
-          [
-            {
-              fixture_id: pendingFixture,
-              home_score: 2,
-              away_score: 0,
-              result: "home",
-            },
-          ],
-          "150ms"
-        )) as Row;
-
-        expect(report).toMatchObject({
-          busy: true,
-          updated: [],
-          changed_underneath: 0,
-          round_settled: [],
-        });
-        // Not a single row was touched — it gave up before reading anything.
-        expect(await db.fixtureRow(pendingFixture)).toMatchObject({
-          status: "scheduled",
-          result: null,
-        });
-
-        // The next scheduled run finds the lock free and does the work. Nothing
-        // was lost by skipping: the feed is re-read from scratch every time.
-        await holder.sql("rollback");
-        const retry = (await db.applyFixtureResults(
-          [
-            {
-              fixture_id: pendingFixture,
-              home_score: 2,
-              away_score: 0,
-              result: "home",
-            },
-          ],
-          "150ms"
-        )) as Row;
-
-        expect(retry).toMatchObject({ busy: false });
-        expect(retry.updated).toHaveLength(1);
-        expect(await db.fixtureRow(pendingFixture)).toMatchObject({
-          status: "played",
-          result: "home",
-          home_score: 2,
-        });
-      } finally {
-        await holder.end();
-      }
-    });
 
     it("refuses a manual result edit once the round is settled", async () => {
       const { competitionId, roundId, decided } = await seedContended();

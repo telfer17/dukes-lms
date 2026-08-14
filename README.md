@@ -23,7 +23,6 @@ doc first, and all three must agree.
 | `/pick/[entryId]` | A player's private pick page. The uuid **is** the credential |
 | `/find` | Lost your pick link? Look it up by phone number |
 | `/admin` | Competition, entrants and payments, results and settling |
-| `/api/cron/results` | Daily results fill from API-Football, header-authenticated |
 
 ## Stack
 
@@ -66,30 +65,13 @@ production. `.env.example` is the annotated template; never commit real values.
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Anon key for public reads. `NEXT_PUBLIC_` — treat as public |
 | `SUPABASE_SECRET_KEY` | Server-only key. Bypasses grants — never expose it |
 | `ADMIN_PASSWORD` | Password for `/admin`. The cookie stores its SHA-256, not the password |
-| `CRON_SECRET` | Shared secret for `/api/cron/results`. `openssl rand -hex 32` |
-| `API_FOOTBALL_KEY` | [api-football.com](https://www.api-football.com) key. Free tier is plenty — one call per run |
 | `NEXT_PUBLIC_SITE_URL` | Optional. Absolute base for the share card; only needed once there's a custom domain (Vercel's own URL is picked up automatically) |
 
 All three Supabase vars are needed **at build time**, not just at runtime: both
 client modules throw on import if they're missing, and `next build` imports
 them while collecting page data. A build without them fails loudly — which is
 the point, rather than shipping a client that can't read anything.
-`ADMIN_PASSWORD`, `CRON_SECRET` and `API_FOOTBALL_KEY` are read per request, so
-they're only needed at runtime.
-
-### Invoking the cron route by hand
-
-The secret goes in a **header** — never a query string, which would leak it
-into logs and browser history:
-
-```bash
-curl -H "Authorization: Bearer $CRON_SECRET" https://<host>/api/cron/results
-# or
-curl -H "x-cron-secret: $CRON_SECRET" https://<host>/api/cron/results
-```
-
-Without a valid secret the route returns **401**. `Authorization: Bearer` is
-what Vercel Cron sends automatically.
+`ADMIN_PASSWORD` is read per request, so it's only needed at runtime.
 
 ## Database: the manual SQL workflow
 
@@ -133,11 +115,12 @@ has no time, or the season isn't 380 fixtures / 38 matchdays / 10 per matchday.
 `tests/fixtures.test.ts` re-checks the committed JSON, so a bad regeneration
 fails CI rather than reaching the database.
 
-**Auto-results.** `/api/cron/results` fills in finished results once a day
-(`vercel.json`, 04:00 UTC) and can be triggered by hand as above. It **only
-fills results** — settlement stays manual. It never overwrites a result already
-entered, skips fixtures whose round is already settled, reports postponements
-rather than writing them, and refuses to guess an unrecognised club name.
+**Results.** Entered by hand in `/admin/results` — every fixture, including
+postponements and abandonments — and then the round is settled from the same
+screen. There is no feed and no scheduled job.
+
+An auto-results integration existed and was removed before launch — recoverable
+from git history (search: `results-feed`) if ever wanted.
 
 ## Settlement
 
@@ -155,12 +138,12 @@ the functions. The shape is **plan → validate → apply**:
 
 There is no half-applied settlement to recover from.
 
-**One lock across every write path.** `lms_settle_round`,
-`lms_apply_fixture_results` (the results cron) and `lms_set_fixture_result` (the
-manual editor) all take the same transaction-scoped advisory lock as their first
-act, and re-check their settled-round guards *inside* the transaction. Reading
-"is this round settled?" and writing afterwards over two connections is a gap a
-settle can land in; this closes it. All three functions are revoked from
+**One lock across every write path.** `lms_settle_round` and
+`lms_set_fixture_result` (the manual result editor) both take the same
+transaction-scoped advisory lock as their first act, and re-check their
+settled-round guards *inside* the transaction. Reading "is this round settled?"
+and writing afterwards over two connections is a gap a settle can land in; this
+closes it. Both functions, and `lms_lock_key`, are revoked from
 `anon`/`authenticated` and granted only to `service_role`.
 
 ## Tests
@@ -176,7 +159,7 @@ The engine, the plan builder and the pure helpers need no database. The
 integration suite in `tests/db/` exercises the real schema and the real
 functions against a real Postgres: full lifecycle, won/rollover/provisional
 endings, re-settle refusal, rollback of a transaction that fails at COMMIT, and
-cron-vs-settlement lock contention in both directions.
+a manual result edit being refused once the round is settled.
 
 ```bash
 ./scripts/scratch-db.sh test     # disposable local cluster, then the whole suite
@@ -208,32 +191,28 @@ The weekly rhythm, in order:
    the announced kick-off times. A game moved *later* is harmless; a game moved
    *earlier* than the stored deadline would let someone pick after it has
    kicked off.
-2. **After matchday 1, eyeball the cron.** Check `/admin/results` the morning
-   after the first round's games: results should already be filled in. If they
-   aren't, invoke the route by hand (above) and read what it reports — an
-   unrecognised club name or a missing `API_FOOTBALL_KEY` shows up there. Better
-   to find that in August than in December.
+2. **Enter the results.** `/admin/results`, once the matchday's games are done.
+   Postponed and abandoned games are entered as such — the rules count those
+   picks as wins.
 3. **Settle the round.** `/admin/results` → check every fixture has a result →
-   **Settle round**. Postponed and abandoned games are entered by hand, since
-   the cron reports them rather than writing them. Settling is all-or-nothing;
-   if it refuses, it says which fingerprint failed — re-run it.
+   **Settle round**. Settling is all-or-nothing; if it refuses, it says which
+   fingerprint failed — re-run it.
 4. **Watch for the end states.** One entry left, or all the remaining entries
    belonging to one person, ends the competition. Everyone out in the same round
    rolls the pot over into a new one — start it in `/admin/competition` with the
    carried-in pot, and remember newcomers then pay the higher buy-in
    (`docs/LMS-RULES.md`).
 
-**Next season:** bump `SEASON` in `app/api/cron/results/route.ts` (currently
-`2026`, meaning 2026/27) and regenerate the fixtures from the new openfootball
-file, then re-seed and re-verify. The cron asks API-Football for that season's
-fixtures, so leaving it stale means it quietly fills in nothing.
+**Next season:** bump `SEASON` in `scripts/build-fixtures.mjs` (currently
+`2026-27`), regenerate the fixtures from the new openfootball file, then re-seed
+and re-verify.
 
 ## Deploying
 
 [`DEPLOY.md`](DEPLOY.md) is the checklist: Vercel project setup, the exact
 environment variables, and the post-deploy verification to run **against the
-live URL**. `vercel.json` registers the daily cron; nothing else is needed at
-build time beyond the environment variables above.
+live URL**. Nothing is needed at build time beyond the environment variables
+above.
 
 The share card at `public/og-image.png` is generated from
 `scripts/og-card.html` — the regeneration command is in a comment at the top of

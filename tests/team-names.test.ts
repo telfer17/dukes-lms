@@ -1,11 +1,10 @@
+// What survives the removal of the auto-results cron: the canonical club list
+// and the openfootball tag-strip that the fixture seeding depends on. The
+// API-Football alias table and resolveTeamName/resolveTeamNames went with the
+// feed that used them (recoverable from git history — search: results-feed).
+
 import { describe, expect, it } from "vitest";
-import {
-  API_FOOTBALL_ALIASES,
-  CANONICAL_TEAMS,
-  resolveTeamName,
-  resolveTeamNames,
-  stripClubTag,
-} from "@/lib/team-names";
+import { CANONICAL_TEAMS, stripClubTag } from "@/lib/team-names";
 
 describe("stripClubTag", () => {
   it("strips a trailing FC", () => {
@@ -30,10 +29,17 @@ describe("stripClubTag", () => {
     expect(stripClubTag("Fulham")).toBe("Fulham");
     expect(stripClubTag("AFCA Amsterdam")).toBe("AFCA Amsterdam");
   });
+
+  it("tolerates surrounding whitespace", () => {
+    expect(stripClubTag("  Arsenal FC  ")).toBe("Arsenal");
+  });
 });
 
-describe("resolveTeamName", () => {
-  it("resolves every openfootball source name we will actually see", () => {
+describe("the openfootball source names", () => {
+  // The fixture generator applies exactly this transformation to the names in
+  // the source file. If stripping every one of them does not land precisely on
+  // the canonical 20, seeding would either miss a club or invent one.
+  it("strip to exactly the canonical 20", () => {
     const source = [
       "Arsenal FC", "Aston Villa FC", "AFC Bournemouth", "Brentford FC",
       "Brighton & Hove Albion FC", "Chelsea FC", "Coventry City FC",
@@ -42,80 +48,18 @@ describe("resolveTeamName", () => {
       "Manchester City FC", "Manchester United FC", "Newcastle United FC",
       "Nottingham Forest FC", "Sunderland AFC", "Tottenham Hotspur FC",
     ];
-    const resolved = source.map(resolveTeamName);
-    expect(resolved.filter((r) => r === null)).toEqual([]);
-    expect([...new Set(resolved)].sort()).toEqual([...CANONICAL_TEAMS].sort());
+    expect(source.map(stripClubTag).sort()).toEqual([...CANONICAL_TEAMS].sort());
   });
 
-  it("resolves API-Football short forms", () => {
-    expect(resolveTeamName("Newcastle")).toBe("Newcastle United");
-    expect(resolveTeamName("Tottenham")).toBe("Tottenham Hotspur");
-    expect(resolveTeamName("Brighton")).toBe("Brighton & Hove Albion");
-    expect(resolveTeamName("Man Utd")).toBe("Manchester United");
-    expect(resolveTeamName("Leeds")).toBe("Leeds United");
-  });
-
-  it("passes a canonical name straight through", () => {
-    for (const team of CANONICAL_TEAMS) {
-      expect(resolveTeamName(team)).toBe(team);
-    }
-  });
-
-  it("tolerates surrounding whitespace", () => {
-    expect(resolveTeamName("  Arsenal FC  ")).toBe("Arsenal");
-  });
-
-  it("returns null for a club we do not have — never a near-miss", () => {
-    // These are real Premier League clubs in other seasons. Mapping them onto
-    // one of ours would post a result against the wrong team, so they must
-    // come back unmapped and stop the run.
+  it("does not turn a club from another season into one of ours", () => {
+    // Real Premier League clubs in other seasons. Stripping must leave them
+    // recognisably outside the canonical list, never near-missed onto a club we
+    // do have — that would attach fixtures to the wrong team.
     for (const outsider of [
-      "Wolverhampton Wanderers", "Wolves", "Leicester City", "Leicester",
-      "Southampton", "West Ham United", "Burnley", "Sheffield United",
+      "Wolverhampton Wanderers FC", "Leicester City FC", "Southampton FC",
+      "West Ham United FC", "Burnley FC", "Sheffield United FC",
     ]) {
-      expect(resolveTeamName(outsider)).toBeNull();
+      expect(CANONICAL_TEAMS).not.toContain(stripClubTag(outsider));
     }
-  });
-
-  it("does not resolve inherited object keys as aliases", () => {
-    // A plain object literal would answer for "constructor" and friends.
-    for (const key of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
-      expect(resolveTeamName(key)).toBeNull();
-      expect(API_FOOTBALL_ALIASES[key]).toBeUndefined();
-    }
-  });
-
-  it("returns null for junk", () => {
-    expect(resolveTeamName("")).toBeNull();
-    expect(resolveTeamName("Not A Club")).toBeNull();
-    expect(resolveTeamName("FC")).toBeNull();
-  });
-
-  it("never aliases a name onto a club outside the canonical 20", () => {
-    for (const [alias, target] of Object.entries(API_FOOTBALL_ALIASES)) {
-      expect(CANONICAL_TEAMS).toContain(target);
-      expect(alias).not.toBe(target); // an alias that equals its target is dead weight
-    }
-  });
-});
-
-describe("resolveTeamNames", () => {
-  it("separates what mapped from what did not", () => {
-    const { resolved, unmapped } = resolveTeamNames([
-      "Arsenal FC", "Wolves", "Newcastle", "Leicester City",
-    ]);
-    expect(resolved.get("Arsenal FC")).toBe("Arsenal");
-    expect(resolved.get("Newcastle")).toBe("Newcastle United");
-    expect(unmapped).toEqual(["Leicester City", "Wolves"]);
-  });
-
-  it("reports each unknown name once, sorted", () => {
-    const { unmapped } = resolveTeamNames(["Zzz", "Aaa", "Zzz"]);
-    expect(unmapped).toEqual(["Aaa", "Zzz"]);
-  });
-
-  it("returns no unmapped names for a clean batch", () => {
-    const { unmapped } = resolveTeamNames([...CANONICAL_TEAMS]);
-    expect(unmapped).toEqual([]);
   });
 });

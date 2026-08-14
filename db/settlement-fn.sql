@@ -33,25 +33,26 @@
 --
 -- THE LOCK
 -- --------
--- app/admin/results/actions.ts used to carry a note that a settlement RPC "must
--- also take the results cron's guard inside it, or the lock will only be half a
--- lock". This is that whole lock.
---
 -- The hazard is not two settlements racing — it is a fixture WRITE racing a
--- settlement. Both the cron and the manual result editor do
+-- settlement. The manual result editor does
 -- read-round-status → decide → write-fixture, which is a time-of-check /
--- time-of-use gap: they can read "round not settled", settlement can then settle
--- the round, and their write then lands a new result into a round whose
+-- time-of-use gap: it can read "round not settled", settlement can then settle
+-- the round, and its write then lands a new result into a round whose
 -- eliminations were already computed from the old one. Nothing downstream
 -- notices, and the board silently disagrees with the results people went out on.
 --
--- So all three write paths — settlement, the cron, the manual editor — take the
--- SAME transaction-scoped advisory lock (lms_lock_key()) as their first act, and
+-- So both write paths — settlement and the manual editor — take the SAME
+-- transaction-scoped advisory lock (lms_lock_key()) as their first act, and
 -- re-check their guards inside it. They therefore serialise: a fixture write
 -- either completes entirely before settlement reads anything, or runs after
 -- settlement has committed and is then correctly refused by the settled-round
 -- guard. Every path takes the advisory lock BEFORE any row lock, so the lock
 -- order is total and they cannot deadlock.
+--
+-- A third path used to exist here: lms_apply_fixture_results, the auto-results
+-- cron's batch write. The integration was removed before launch (see the README)
+-- and so is its function. If your database was set up before that, drop it once:
+--   drop function if exists lms_apply_fixture_results(jsonb, text);
 --
 -- SECURITY
 -- --------
@@ -67,7 +68,7 @@
 -- ----------------------------------------------------------------------------
 -- The one lock every LMS write path takes. A single fixed key: the point is
 -- mutual exclusion across settlement and fixture writes, not fine-grained
--- concurrency — this is a pub competition with one organiser and a daily cron.
+-- concurrency — this is a pub competition with one organiser.
 -- ----------------------------------------------------------------------------
 create or replace function lms_lock_key()
 returns bigint
@@ -130,7 +131,7 @@ declare
 begin
   -- ---- 0. the lock, before anything is read ----------------------------
   -- Transaction-scoped: released at COMMIT or ROLLBACK, never leaked by a
-  -- failed call. Taken first so cron/manual fixture writes cannot slip a new
+  -- failed call. Taken first so a manual fixture write cannot slip a new
   -- result in between the validation below and the writes at the bottom.
   perform pg_advisory_xact_lock(lms_lock_key());
 
@@ -191,8 +192,8 @@ begin
   -- nothing, let the organiser re-run against fresh state.
 
   -- 3a. fixtures for the matchday: their status and result ARE the settlement.
-  -- If the cron filled a result, or an admin marked a game postponed, between
-  -- the plan and here, every outcome in the plan is suspect.
+  -- If an admin entered a result, or marked a game postponed, between the plan
+  -- and here, every outcome in the plan is suspect.
   select coalesce(jsonb_agg(
            jsonb_build_object('id', f.id::int, 'status', f.status, 'result', f.result)
            order by f.id
@@ -391,166 +392,19 @@ comment on function lms_settle_round(jsonb) is
 
 
 -- ----------------------------------------------------------------------------
--- lms_apply_fixture_results(updates) — the results cron's write, in ONE
--- transaction, under the settlement lock.
---
--- The cron used to loop one PostgREST update per fixture, each its own
--- transaction, having checked the settled-round guard beforehand. That guard
--- could go stale mid-loop. Here the guard is re-read inside the same
--- transaction and the same lock as settlement, so a settle cannot land between
--- the check and the write.
---
--- Per-fixture preconditions are still re-asserted (still 'scheduled', still no
--- result) — manual entry always wins — and a fixture failing them is reported
--- as skipped rather than aborting the batch: one stale row must not cost the
--- other nine results.
---
--- THE WAIT IS BOUNDED. Unlike settlement — where an organiser has pressed a
--- button and should be made to wait for their answer — this is an unattended
--- daily job with nobody watching. Blocking indefinitely on the lock would just
--- burn the platform's function timeout and fail opaquely. Instead it waits
--- p_lock_timeout for the lock and, if settlement still holds it, returns
--- busy = true having written NOTHING. The caller reports the run as skipped and
--- the next scheduled run picks the results up; nothing is lost, because filling
--- a result is not time-critical and the feed is re-read from scratch every run.
---
---   updates: [{fixture_id, home_score, away_score, result}]
---   returns: { busy: bool,
---              updated: [{fixture_id, home_score, away_score, result}],
---              changed_underneath: n,
---              round_settled: [{fixture_id, round_number}] }
--- ----------------------------------------------------------------------------
-
--- The signature gained a parameter, so the single-argument version has to go
--- explicitly: CREATE OR REPLACE would leave it behind as an overload, and
--- PostgREST would then have two candidates to choose between.
-drop function if exists lms_apply_fixture_results(jsonb);
-
-create or replace function lms_apply_fixture_results(
-  p_updates      jsonb,
-  p_lock_timeout text default '5s'
-)
-returns jsonb
-language plpgsql
-security invoker
-set search_path = public, pg_temp
-as $$
-declare
-  u             jsonb;
-  fx            fixtures%rowtype;
-  v_round_no    smallint;
-  v_updated     jsonb := '[]'::jsonb;
-  v_settled     jsonb := '[]'::jsonb;
-  v_changed     int   := 0;
-begin
-  begin
-    -- lock_timeout bounds any wait for a lock, advisory locks included. Set
-    -- transaction-locally so it cannot leak into another statement.
-    perform set_config('lock_timeout', p_lock_timeout, true);
-    perform pg_advisory_xact_lock(lms_lock_key());
-  exception when lock_not_available then
-    -- Settlement is mid-flight. Give up cleanly rather than half-waiting: no
-    -- fixture has been read, let alone written.
-    return jsonb_build_object(
-      'busy', true,
-      'updated', '[]'::jsonb,
-      'changed_underneath', 0,
-      'round_settled', '[]'::jsonb
-    );
-  end;
-
-  -- We hold the lock now, so nothing below should ever have to wait. Clear the
-  -- timeout again so a slow-but-legitimate row lock cannot fail the batch.
-  perform set_config('lock_timeout', '0', true);
-
-  for u in select * from jsonb_array_elements(coalesce(p_updates, '[]'::jsonb))
-  loop
-    select * into fx
-      from fixtures
-     where id = (u->>'fixture_id')::int
-       for update;
-
-    if not found then
-      v_changed := v_changed + 1;
-      continue;
-    end if;
-
-    -- Manual entry always wins. `result is null` alone is not enough: an admin
-    -- who marks a game postponed leaves result null, and without the status
-    -- check we would flip it back to played and hand a result to a pick the
-    -- rules say should have SURVIVED.
-    if fx.status <> 'scheduled' or fx.result is not null then
-      v_changed := v_changed + 1;
-      continue;
-    end if;
-
-    -- The settled-round guard, re-read under the lock.
-    --
-    -- Scoped to the ACTIVE competition, as the route's version was:
-    -- rounds_unique_matchday is unique (competition_id, matchday), so the same
-    -- matchday legitimately recurs across competitions, and an unscoped lookup
-    -- would let a long-finished competition's settled rounds block
-    -- result-filling for the rest of the season. With no competition active the
-    -- guard is simply empty — filling results in the gap after a rollover is
-    -- exactly what lets the next competition settle cleanly.
-    select r.round_number into v_round_no
-      from rounds r
-      join competitions c on c.id = r.competition_id
-     where c.status = 'active'
-       and r.matchday = fx.matchday
-       and r.status = 'settled'
-     limit 1;
-
-    if found then
-      v_settled := v_settled || jsonb_build_object(
-        'fixture_id', fx.id, 'round_number', v_round_no
-      );
-      continue;
-    end if;
-
-    update fixtures
-       set home_score = (u->>'home_score')::smallint,
-           away_score = (u->>'away_score')::smallint,
-           status     = 'played',
-           result     = u->>'result'
-     where id = fx.id;
-
-    v_updated := v_updated || jsonb_build_object(
-      'fixture_id',  fx.id,
-      'home_score',  (u->>'home_score')::int,
-      'away_score',  (u->>'away_score')::int,
-      'result',      u->>'result'
-    );
-  end loop;
-
-  return jsonb_build_object(
-    'busy',               false,
-    'updated',            v_updated,
-    'changed_underneath', v_changed,
-    'round_settled',      v_settled
-  );
-end;
-$$;
-
-comment on function lms_apply_fixture_results(jsonb, text) is
-  'Results-cron write path: applies feed results in one transaction under the settlement lock, re-checking the settled-round guard inside it.';
-
-
--- ----------------------------------------------------------------------------
 -- lms_set_fixture_result(...) — the manual admin write, under the same lock.
 --
--- /admin/results has the identical time-of-check/time-of-use gap as the cron:
--- it reads "has this matchday been settled?", then writes. Routing it through
--- the lock closes the last way a fixture result can change out from under a
--- settlement that is already committing.
+-- /admin/results has a time-of-check/time-of-use gap: it reads "has this
+-- matchday been settled?", then writes. Routing it through the lock closes the
+-- last way a fixture result can change out from under a settlement that is
+-- already committing.
 --
 -- The settled-round guard here is deliberately NOT scoped to the active
 -- competition, because that is what the route did before this change and this
--- pass is not the place to alter it. It is stricter than the cron's, so it errs
--- towards refusing an edit — the safe direction. (Worth revisiting: a settled
--- matchday from a finished competition currently blocks manual edits to those
--- fixtures for the rest of the season, which is the same over-reach the cron's
--- guard was deliberately scoped to avoid.)
+-- pass is not the place to alter it. It errs towards refusing an edit — the
+-- safe direction. (Worth revisiting: a settled matchday from a finished
+-- competition currently blocks manual edits to those fixtures for the rest of
+-- the season.)
 --
 --   returns: { ok: true } | { ok: false, code: 'not_found'|'round_settled',
 --                             round_number }
@@ -608,13 +462,16 @@ comment on function lms_set_fixture_result(int, text, text) is
 -- Supabase's setup would make all three callable with the publishable (anon)
 -- key. Revoke, then grant to service_role only — the secret key used by
 -- lib/supabase-server.ts.
+--
+-- Re-running this file does NOT drop lms_apply_fixture_results from a database
+-- that already has it (the auto-results cron this file used to serve was
+-- removed before launch). Drop it by hand, once:
+--   drop function if exists lms_apply_fixture_results(jsonb, text);
 -- ----------------------------------------------------------------------------
 revoke all on function lms_lock_key()                          from public, anon, authenticated;
 revoke all on function lms_settle_round(jsonb)                 from public, anon, authenticated;
-revoke all on function lms_apply_fixture_results(jsonb, text)  from public, anon, authenticated;
 revoke all on function lms_set_fixture_result(int, text, text) from public, anon, authenticated;
 
 grant execute on function lms_lock_key()                          to service_role;
 grant execute on function lms_settle_round(jsonb)                 to service_role;
-grant execute on function lms_apply_fixture_results(jsonb, text)  to service_role;
 grant execute on function lms_set_fixture_result(int, text, text) to service_role;

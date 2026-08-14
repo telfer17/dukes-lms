@@ -207,9 +207,9 @@ export async function getPicksForRound(roundId: string): Promise<PickRow[]> {
 // with the write that depended on it happening afterwards over a separate
 // connection. That gap is exactly what let a settle land between the check and
 // the write. It now lives INSIDE the settlement lock, in lms_set_fixture_result
-// and lms_apply_fixture_results (db/settlement-fn.sql), where the check and the
-// write share a transaction. Reading it out here again would just reintroduce
-// the race in a place that looks safe.
+// (db/settlement-fn.sql), where the check and the write share a transaction.
+// Reading it out here again would just reintroduce the race in a place that
+// looks safe.
 
 export type FixtureRow = Fixture & { kickoff: string };
 

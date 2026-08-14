@@ -258,22 +258,6 @@ export class TestDb {
     ]);
   }
 
-  async applyFixtureResults(
-    updates: {
-      fixture_id: number;
-      home_score: number;
-      away_score: number;
-      result: string;
-    }[],
-    /** How long to wait for the settlement lock before reporting busy. */
-    lockTimeout = "5s"
-  ): Promise<Record<string, unknown>> {
-    return this.value("select lms_apply_fixture_results($1::jsonb, $2) as r", [
-      JSON.stringify(updates),
-      lockTimeout,
-    ]);
-  }
-
   async setFixtureResult(
     fixtureId: number,
     status: string,
