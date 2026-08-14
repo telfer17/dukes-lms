@@ -56,7 +56,7 @@ export default async function BoardPage() {
     return (
       <main className="mx-auto max-w-2xl px-4 py-16 text-center">
         <h1 className="text-2xl font-bold tracking-tight">
-          Dukes — Last Man Standing
+          Glasgow Dukes — Last Man Standing
         </h1>
         <p className="mt-3 text-gray-600">
           The board can&apos;t be loaded right now. Try again in a minute.
@@ -69,7 +69,7 @@ export default async function BoardPage() {
     return (
       <main className="mx-auto max-w-2xl px-4 py-16 text-center">
         <h1 className="text-2xl font-bold tracking-tight">
-          Dukes — Last Man Standing
+          Glasgow Dukes — Last Man Standing
         </h1>
         <p className="mt-3 text-gray-600">
           No competition running yet. Check back soon.
@@ -112,7 +112,7 @@ export default async function BoardPage() {
   // module (lib/standings.ts), so the two screens cannot describe the same two
   // groups differently or order the eliminated two ways.
   const { standing: active, eliminated: out } = splitStandings(
-    board.map((r) => ({ ...r, eliminatedRound: r.eliminated_round_number }))
+    board.map((r) => ({ ...r, eliminatedRound: r.eliminated_round_number })),
   );
 
   // ---- entries: private rows, read once, projected before anything ships ----
@@ -157,7 +157,7 @@ export default async function BoardPage() {
       ]);
       const teamName = new Map(teams.map((t) => [t.id, t.name]));
       const entryName = new Map(
-        entries.map((e) => [e.id, e.participant?.name ?? "—"])
+        entries.map((e) => [e.id, e.participant?.name ?? "—"]),
       );
       currentPicks = picks
         .map((p) => ({

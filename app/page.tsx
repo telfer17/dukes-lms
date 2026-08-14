@@ -68,7 +68,12 @@ type LiveState =
       label: string;
       alive: number;
       total: number;
-      round: { number: number; matchday: number; deadline: string; open: boolean } | null;
+      round: {
+        number: number;
+        matchday: number;
+        deadline: string;
+        open: boolean;
+      } | null;
     };
 
 /**
@@ -102,7 +107,10 @@ async function readLiveState(): Promise<LiveState> {
   // Over, but not gone: the winner (or the rollover) and the pot come off the
   // same rows the board and the grid are still rendering from.
   if (isConcluded(competition.status)) {
-    return { kind: "concluded", summary: await readConcludedSummary(competition) };
+    return {
+      kind: "concluded",
+      summary: await readConcludedSummary(competition),
+    };
   }
 
   const [boardRes, roundsRes] = await Promise.all([
@@ -113,7 +121,10 @@ async function readLiveState(): Promise<LiveState> {
   // Half a read is worse than none: "0 still standing" on a live competition
   // would be a lie, so a failed read says so instead.
   if (boardRes.error || roundsRes.error) {
-    console.error("home: live state read failed:", boardRes.error ?? roundsRes.error);
+    console.error(
+      "home: live state read failed:",
+      boardRes.error ?? roundsRes.error,
+    );
     return { kind: "unavailable" };
   }
 
@@ -125,7 +136,8 @@ async function readLiveState(): Promise<LiveState> {
   return {
     kind: "running",
     label: competition.label,
-    alive: board.filter((r) => r.status === "active" || r.status === "winner").length,
+    alive: board.filter((r) => r.status === "active" || r.status === "winner")
+      .length,
     total: board.length,
     round: round
       ? {
@@ -180,7 +192,7 @@ export default async function Home() {
           className="mx-auto rounded-full"
         />
         <h1 className="mt-6 text-3xl font-bold tracking-tight sm:text-5xl">
-          Dukes — Last Man Standing
+          Glasgow Dukes — Last Man Standing
         </h1>
         <p className="mx-auto mt-4 max-w-xl text-lg text-gray-600">
           One Premier League team each round. Win and you&apos;re through, draw
@@ -205,8 +217,8 @@ export default async function Home() {
                 Season kicks off {kickoffFormat.format(new Date(seasonKickoff))}
               </p>
               <p className="mt-1 text-sm text-gray-600">
-                That first kick-off is the round 1 deadline. Entries are taken by
-                the organiser — message your club contact to get in.
+                That first kick-off is the round 1 deadline. Entries are taken
+                by the organiser — message your club contact to get in.
               </p>
             </div>
           )}
@@ -218,8 +230,8 @@ export default async function Home() {
               </p>
               <p className="mt-2 text-sm text-gray-600">
                 No competition is running at the moment. If the last one rolled
-                over, the next one starts once the organiser opens it — your club
-                contact will know.
+                over, the next one starts once the organiser opens it — your
+                club contact will know.
               </p>
             </div>
           )}
@@ -322,7 +334,10 @@ export default async function Home() {
 
         <div className="mt-6 grid gap-6 sm:grid-cols-2">
           {howItWorks.map((card) => (
-            <div key={card.title} className="rounded-md border border-gray-200 p-5">
+            <div
+              key={card.title}
+              className="rounded-md border border-gray-200 p-5"
+            >
               <h3 className="font-semibold">{card.title}</h3>
               <p className="mt-2 text-sm text-gray-600">{card.body}</p>
             </div>
@@ -332,8 +347,9 @@ export default async function Home() {
         <div className="mt-6 rounded-md border border-gray-200 p-5">
           <h3 className="font-semibold">{ENTRY_LABEL} to enter</h3>
           <p className="mt-2 text-sm text-gray-600">
-            {POT_SHARE_LABEL} goes into the prize pot, {CLUB_SHARE_LABEL} goes to
-            the club. The pot is winner-takes-all — no second or third places.
+            {POT_SHARE_LABEL} goes into the prize pot, {CLUB_SHARE_LABEL} goes
+            to the club. The pot is winner-takes-all — no second or third
+            places.
           </p>
           <p className="mt-2 text-sm text-gray-600">
             Entries and picks both go through the organiser: message your club
@@ -346,7 +362,10 @@ export default async function Home() {
 
         <p className="mt-6 text-sm text-gray-600">
           Missed a deadline? Picked a team whose game got called off?{" "}
-          <Link href="/rules" className="font-semibold text-blue-600 hover:underline">
+          <Link
+            href="/rules"
+            className="font-semibold text-blue-600 hover:underline"
+          >
             The full rules
           </Link>{" "}
           cover every one of those, and settle any argument later in the season.

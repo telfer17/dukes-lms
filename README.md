@@ -1,4 +1,4 @@
-# Dukes — Last Man Standing
+# Glasgow Dukes — Last Man Standing
 
 Glasgow Wellington FC's Last Man Standing competition, run over the English
 Premier League season. Each round every player picks one team to win: win and
@@ -22,12 +22,12 @@ single source of truth, `lib/lms.ts` is the pure engine that implements it, and
 `/rules` is the player-facing retelling. If a rule changes it changes in the
 doc first, and all three must agree.
 
-| Screen | What it is |
-| --- | --- |
-| `/` | Homepage — how it works, entry price, live round and alive count |
-| `/board` | Who's still standing, this round's picks once locked, the pot |
-| `/rules` | The full ruleset in plain English |
-| `/grid` | Every entry's picks round by round |
+| Screen   | What it is                                                          |
+| -------- | ------------------------------------------------------------------- |
+| `/`      | Homepage — how it works, entry price, live round and alive count    |
+| `/board` | Who's still standing, this round's picks once locked, the pot       |
+| `/rules` | The full ruleset in plain English                                   |
+| `/grid`  | Every entry's picks round by round                                  |
 | `/admin` | Competition, entrants (payment **and** picks), results and settling |
 
 ## Stack
@@ -66,13 +66,13 @@ Dev runs on **3001**, not 3000, so it can sit alongside the World Cup predictor.
 All of these live in `.env.local` locally and in Vercel's project settings in
 production. `.env.example` is the annotated template; never commit real values.
 
-| Variable | What it's for |
-| --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL. `NEXT_PUBLIC_` — treat as public |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Anon key for public reads. `NEXT_PUBLIC_` — treat as public |
-| `SUPABASE_SECRET_KEY` | Server-only key. Bypasses grants — never expose it |
-| `ADMIN_PASSWORD` | Password for `/admin`. The cookie stores its SHA-256, not the password |
-| `NEXT_PUBLIC_SITE_URL` | Optional. Absolute base for the share card; only needed once there's a custom domain (Vercel's own URL is picked up automatically) |
+| Variable                               | What it's for                                                                                                                      |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`             | Supabase project URL. `NEXT_PUBLIC_` — treat as public                                                                             |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Anon key for public reads. `NEXT_PUBLIC_` — treat as public                                                                        |
+| `SUPABASE_SECRET_KEY`                  | Server-only key. Bypasses grants — never expose it                                                                                 |
+| `ADMIN_PASSWORD`                       | Password for `/admin`. The cookie stores its SHA-256, not the password                                                             |
+| `NEXT_PUBLIC_SITE_URL`                 | Optional. Absolute base for the share card; only needed once there's a custom domain (Vercel's own URL is picked up automatically) |
 
 All three Supabase vars are needed **at build time**, not just at runtime: both
 client modules throw on import if they're missing, and `next build` imports
@@ -85,12 +85,12 @@ the point, rather than shipping a client that can't read anything.
 There are no migrations to run and no ORM. The SQL in `db/` is pasted into the
 Supabase SQL editor **in this order**, and every file is re-runnable:
 
-| # | File | What it does |
-| --- | --- | --- |
-| 1 | `db/lms-schema.sql` | Tables, views, constraints, and the grants that keep the anon key to public-safe reads |
-| 2 | `db/seed-fixtures.sql` | The 380 Premier League fixtures. Additive, insert-only, safe to re-run |
-| 3 | `db/verify-fixtures.sql` | Read-only check. **Every row must say `PASS`** |
-| 4 | `db/settlement-fn.sql` | `lms_lock_key`, `lms_settle_round`, `lms_set_fixture_result` |
+| #   | File                     | What it does                                                                           |
+| --- | ------------------------ | -------------------------------------------------------------------------------------- |
+| 1   | `db/lms-schema.sql`      | Tables, views, constraints, and the grants that keep the anon key to public-safe reads |
+| 2   | `db/seed-fixtures.sql`   | The 380 Premier League fixtures. Additive, insert-only, safe to re-run                 |
+| 3   | `db/verify-fixtures.sql` | Read-only check. **Every row must say `PASS`**                                         |
+| 4   | `db/settlement-fn.sql`   | `lms_lock_key`, `lms_settle_round`, `lms_set_fixture_result`                           |
 
 Order matters: the seed needs the schema's `teams` rows to resolve club names,
 and the settlement functions reference schema objects. Run step 3 and read the
@@ -148,7 +148,7 @@ There is no half-applied settlement to recover from.
 **One lock across every write path.** `lms_settle_round` and
 `lms_set_fixture_result` (the manual result editor) both take the same
 transaction-scoped advisory lock as their first act, and re-check their
-settled-round guards *inside* the transaction. Reading "is this round settled?"
+settled-round guards _inside_ the transaction. Reading "is this round settled?"
 and writing afterwards over two connections is a gap a settle can land in; this
 closes it. Both functions, and `lms_lock_key`, are revoked from
 `anon`/`authenticated` and granted only to `service_role`.
@@ -195,8 +195,8 @@ The weekly rhythm, in order:
    the seed is insert-only, so re-running it changes nothing. A round's deadline
    was set from its matchday's earliest kickoff at the time rounds were
    generated. Compare the next round's deadline in `/admin/competition` against
-   the announced kick-off times. A game moved *later* is harmless; a game moved
-   *earlier* than the stored deadline would let someone pick after it has
+   the announced kick-off times. A game moved _later_ is harmless; a game moved
+   _earlier_ than the stored deadline would let someone pick after it has
    kicked off.
 2. **Enter the results.** `/admin/results`, once the matchday's games are done.
    Postponed and abandoned games are entered as such — the rules count those
