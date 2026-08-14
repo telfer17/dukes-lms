@@ -38,10 +38,56 @@ export const SKIP_NOTICE =
 
 export type Row = Record<string, unknown>;
 
+/** Hostnames a scratch cluster is allowed to live on. */
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+/**
+ * Refuse to point this suite at anything that is not obviously local.
+ *
+ * reset() TRUNCATEs every table. A mistyped or copy-pasted connection string is
+ * all it would take to wipe a live competition — entries, picks, who won — and
+ * there is no undo. So the rule is an allowlist, not a blocklist: local host or
+ * nothing, and an explicit LMS_TEST_ALLOW_REMOTE=1 for anyone who genuinely
+ * means it (a CI service container reached by hostname, say).
+ *
+ * Deliberately not silent: a refusal fails the run loudly rather than skipping,
+ * because "your database URL is dangerous" is not a reason to report green.
+ */
+export function assertSafeDatabaseUrl(url: string): void {
+  if (process.env.LMS_TEST_ALLOW_REMOTE === "1") return;
+
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    throw new Error(
+      "LMS_TEST_DATABASE_URL is not a valid connection URL. Expected something like postgres://postgres@127.0.0.1:55432/lms_test."
+    );
+  }
+
+  const isLocal =
+    LOCAL_HOSTS.has(host) ||
+    host.endsWith(".local") ||
+    host.endsWith(".localhost");
+  if (isLocal) return;
+
+  const managed = /\.supabase\.(co|com)$/.test(host)
+    ? ` "${host}" is a Supabase database — almost certainly the real one.`
+    : "";
+
+  throw new Error(
+    `Refusing to run the integration suite against "${host}".${managed}` +
+      " These tests TRUNCATE every table, and there is no undo." +
+      " Point LMS_TEST_DATABASE_URL at a local scratch database (./scripts/scratch-db.sh start)," +
+      " or set LMS_TEST_ALLOW_REMOTE=1 if you are certain the target is disposable."
+  );
+}
+
 export class TestDb {
   private constructor(readonly client: pg.Client) {}
 
   static async connect(): Promise<TestDb> {
+    assertSafeDatabaseUrl(DATABASE_URL);
     const client = new pg.Client({ connectionString: DATABASE_URL });
     await client.connect();
     // A blocked statement should fail the test loudly rather than hang the
@@ -101,6 +147,10 @@ export class TestDb {
 
   /** Wipe everything except the 20-team reference seed. */
   async reset(): Promise<void> {
+    // Re-checked at the destructive statement itself, not just at connect():
+    // this is the line that does the damage, and it should be impossible to
+    // reach it past the guard by holding a connection opened some other way.
+    assertSafeDatabaseUrl(DATABASE_URL);
     await this.sql(`
       truncate picks, entries, rounds, competitions, participants, fixtures
       restart identity cascade;
@@ -214,10 +264,13 @@ export class TestDb {
       home_score: number;
       away_score: number;
       result: string;
-    }[]
+    }[],
+    /** How long to wait for the settlement lock before reporting busy. */
+    lockTimeout = "5s"
   ): Promise<Record<string, unknown>> {
-    return this.value("select lms_apply_fixture_results($1::jsonb) as r", [
+    return this.value("select lms_apply_fixture_results($1::jsonb, $2) as r", [
       JSON.stringify(updates),
+      lockTimeout,
     ]);
   }
 

@@ -643,6 +643,70 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
       }
     });
 
+    it("reports BUSY and writes nothing rather than blocking to a platform timeout", async () => {
+      // The cron is unattended: nobody is waiting on the answer, and blocking
+      // until the function timeout would fail opaquely with no report at all.
+      // It waits a bounded time for the lock and then gives up cleanly.
+      const { pendingFixture } = await seedContended();
+
+      const holder = await TestDb.connect();
+      try {
+        // Stand in for a settlement mid-flight — the lock is what matters here,
+        // not what is holding it.
+        await holder.sql("begin");
+        await holder.sql("select pg_advisory_xact_lock(lms_lock_key())");
+
+        const report = (await db.applyFixtureResults(
+          [
+            {
+              fixture_id: pendingFixture,
+              home_score: 2,
+              away_score: 0,
+              result: "home",
+            },
+          ],
+          "150ms"
+        )) as Row;
+
+        expect(report).toMatchObject({
+          busy: true,
+          updated: [],
+          changed_underneath: 0,
+          round_settled: [],
+        });
+        // Not a single row was touched — it gave up before reading anything.
+        expect(await db.fixtureRow(pendingFixture)).toMatchObject({
+          status: "scheduled",
+          result: null,
+        });
+
+        // The next scheduled run finds the lock free and does the work. Nothing
+        // was lost by skipping: the feed is re-read from scratch every time.
+        await holder.sql("rollback");
+        const retry = (await db.applyFixtureResults(
+          [
+            {
+              fixture_id: pendingFixture,
+              home_score: 2,
+              away_score: 0,
+              result: "home",
+            },
+          ],
+          "150ms"
+        )) as Row;
+
+        expect(retry).toMatchObject({ busy: false });
+        expect(retry.updated).toHaveLength(1);
+        expect(await db.fixtureRow(pendingFixture)).toMatchObject({
+          status: "played",
+          result: "home",
+          home_score: 2,
+        });
+      } finally {
+        await holder.end();
+      }
+    });
+
     it("refuses a manual result edit once the round is settled", async () => {
       const { competitionId, roundId, decided } = await seedContended();
       await db.settle(plan(await planFromDatabase(db, competitionId, roundId)));

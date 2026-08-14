@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import type { ActionResult, ActionState } from "@/lib/action-state";
 import { requireAdmin } from "@/lib/admin-auth";
 import {
+  duplicateCandidateKey,
   findDuplicateEntrant,
   type ExistingEntrant,
 } from "@/lib/admin-entrants";
@@ -102,37 +103,46 @@ export async function createEntry(
 
   // ---- soft duplicate notice ----
   //
-  // Skipped once the organiser has confirmed, so the second press goes through.
-  const confirmed = formData.get("confirm_duplicate") === "on";
-  if (!confirmed) {
-    // When an existing person was chosen, their own name and number are what to
-    // compare — the name/phone fields are hidden in that mode and arrive empty.
-    let candidateName = name;
-    let candidatePhone = phone;
+  // Work out WHO this entry is for first. When an existing person was chosen,
+  // their own name and number are what to compare — the name/phone fields are
+  // hidden in that mode and arrive empty.
+  let candidateName = name;
+  let candidatePhone = phone;
 
-    if (existingParticipantId) {
-      const { data: person, error } = await supabaseServer
-        .from("participants")
-        .select("name, phone")
-        .eq("id", existingParticipantId)
-        .maybeSingle<{ name: string; phone: string | null }>();
-      if (error) {
-        console.error("createEntry participant lookup failed:", error);
-        return { error: "Could not read that person." };
-      }
-      if (!person) return { error: "That person no longer exists." };
-      candidateName = person.name;
-      candidatePhone = person.phone;
+  if (existingParticipantId) {
+    const { data: person, error } = await supabaseServer
+      .from("participants")
+      .select("name, phone")
+      .eq("id", existingParticipantId)
+      .maybeSingle<{ name: string; phone: string | null }>();
+    if (error) {
+      console.error("createEntry participant lookup failed:", error);
+      return { error: "Could not read that person." };
     }
+    if (!person) return { error: "That person no longer exists." };
+    candidateName = person.name;
+    candidatePhone = person.phone;
+  }
 
+  const candidate = {
+    participantId: existingParticipantId || null,
+    name: candidateName,
+    phone: candidatePhone,
+  };
+
+  // A confirmation only counts for the person it was given for. The form sends
+  // back the token minted with the notice; if the organiser edited the fields
+  // in between, it no longer matches what is being submitted and we ask again.
+  // The client clears the notice on those edits too, but this is what makes it
+  // safe — the client cannot be the thing enforcing it.
+  const candidateKey = duplicateCandidateKey(candidate);
+  const confirmed = formData.get("confirm_duplicate") === candidateKey;
+
+  if (!confirmed) {
     let duplicate: ExistingEntrant | null = null;
     try {
       duplicate = findDuplicateEntrant(
-        {
-          participantId: existingParticipantId || null,
-          name: candidateName,
-          phone: candidatePhone,
-        },
+        candidate,
         await existingEntrants(competition.id)
       );
     } catch {
@@ -145,6 +155,7 @@ export async function createEntry(
     if (duplicate) {
       return {
         notice: `${duplicate.name} already has an entry in this competition — add another?`,
+        confirm: candidateKey,
       };
     }
   }

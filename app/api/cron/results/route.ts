@@ -37,6 +37,8 @@ type Report = {
     roundSettled: { fixtureId: number; round: number }[];
     notReportedYet: number;
     abandoned: { fixtureId: number; statusShort: string }[];
+    /** A settlement held the write lock, so this run wrote nothing at all. */
+    settlementInProgress: boolean;
   };
   unmapped: string[];
   errors: string[];
@@ -78,6 +80,7 @@ export async function GET(request: Request) {
       roundSettled: [],
       notReportedYet: 0,
       abandoned: [],
+      settlementInProgress: false,
     },
     unmapped: [],
     errors: [],
@@ -316,6 +319,7 @@ export async function GET(request: Request) {
       report.errors.push(`Could not write results: ${error.message}`);
     } else {
       const applied = data as {
+        busy: boolean;
         updated: {
           fixture_id: number;
           home_score: number;
@@ -325,6 +329,24 @@ export async function GET(request: Request) {
         changed_underneath: number;
         round_settled: { fixture_id: number; round_number: number }[];
       };
+
+      if (applied.busy) {
+        // A settlement is mid-flight and holds the write lock. The function
+        // gave up rather than blocking until the platform's timeout, and wrote
+        // NOTHING — so this is a clean no-op, not a partial run. Filling a
+        // result is never urgent and the feed is re-read from scratch every
+        // time, so tomorrow's run picks these up with nothing lost.
+        //
+        // 503 rather than 200: the job did not do its work and SHOULD be
+        // retried. Reporting it as a success would hide a run that filled no
+        // results, which is the one thing a monitor here is watching for.
+        report.ok = false;
+        report.skipped.settlementInProgress = true;
+        report.errors.push(
+          "Settlement is in progress — no results were written. The next scheduled run will retry."
+        );
+        return Response.json(report, { status: 503 });
+      }
 
       for (const u of applied.updated) {
         report.updated.push({

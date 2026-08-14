@@ -405,12 +405,31 @@ comment on function lms_settle_round(jsonb) is
 -- as skipped rather than aborting the batch: one stale row must not cost the
 -- other nine results.
 --
+-- THE WAIT IS BOUNDED. Unlike settlement — where an organiser has pressed a
+-- button and should be made to wait for their answer — this is an unattended
+-- daily job with nobody watching. Blocking indefinitely on the lock would just
+-- burn the platform's function timeout and fail opaquely. Instead it waits
+-- p_lock_timeout for the lock and, if settlement still holds it, returns
+-- busy = true having written NOTHING. The caller reports the run as skipped and
+-- the next scheduled run picks the results up; nothing is lost, because filling
+-- a result is not time-critical and the feed is re-read from scratch every run.
+--
 --   updates: [{fixture_id, home_score, away_score, result}]
---   returns: { updated: [{fixture_id, home_score, away_score, result}],
+--   returns: { busy: bool,
+--              updated: [{fixture_id, home_score, away_score, result}],
 --              changed_underneath: n,
 --              round_settled: [{fixture_id, round_number}] }
 -- ----------------------------------------------------------------------------
-create or replace function lms_apply_fixture_results(p_updates jsonb)
+
+-- The signature gained a parameter, so the single-argument version has to go
+-- explicitly: CREATE OR REPLACE would leave it behind as an overload, and
+-- PostgREST would then have two candidates to choose between.
+drop function if exists lms_apply_fixture_results(jsonb);
+
+create or replace function lms_apply_fixture_results(
+  p_updates      jsonb,
+  p_lock_timeout text default '5s'
+)
 returns jsonb
 language plpgsql
 security invoker
@@ -424,7 +443,25 @@ declare
   v_settled     jsonb := '[]'::jsonb;
   v_changed     int   := 0;
 begin
-  perform pg_advisory_xact_lock(lms_lock_key());
+  begin
+    -- lock_timeout bounds any wait for a lock, advisory locks included. Set
+    -- transaction-locally so it cannot leak into another statement.
+    perform set_config('lock_timeout', p_lock_timeout, true);
+    perform pg_advisory_xact_lock(lms_lock_key());
+  exception when lock_not_available then
+    -- Settlement is mid-flight. Give up cleanly rather than half-waiting: no
+    -- fixture has been read, let alone written.
+    return jsonb_build_object(
+      'busy', true,
+      'updated', '[]'::jsonb,
+      'changed_underneath', 0,
+      'round_settled', '[]'::jsonb
+    );
+  end;
+
+  -- We hold the lock now, so nothing below should ever have to wait. Clear the
+  -- timeout again so a slow-but-legitimate row lock cannot fail the batch.
+  perform set_config('lock_timeout', '0', true);
 
   for u in select * from jsonb_array_elements(coalesce(p_updates, '[]'::jsonb))
   loop
@@ -487,6 +524,7 @@ begin
   end loop;
 
   return jsonb_build_object(
+    'busy',               false,
     'updated',            v_updated,
     'changed_underneath', v_changed,
     'round_settled',      v_settled
@@ -494,7 +532,7 @@ begin
 end;
 $$;
 
-comment on function lms_apply_fixture_results(jsonb) is
+comment on function lms_apply_fixture_results(jsonb, text) is
   'Results-cron write path: applies feed results in one transaction under the settlement lock, re-checking the settled-round guard inside it.';
 
 
@@ -573,10 +611,10 @@ comment on function lms_set_fixture_result(int, text, text) is
 -- ----------------------------------------------------------------------------
 revoke all on function lms_lock_key()                          from public, anon, authenticated;
 revoke all on function lms_settle_round(jsonb)                 from public, anon, authenticated;
-revoke all on function lms_apply_fixture_results(jsonb)        from public, anon, authenticated;
+revoke all on function lms_apply_fixture_results(jsonb, text)  from public, anon, authenticated;
 revoke all on function lms_set_fixture_result(int, text, text) from public, anon, authenticated;
 
 grant execute on function lms_lock_key()                          to service_role;
 grant execute on function lms_settle_round(jsonb)                 to service_role;
-grant execute on function lms_apply_fixture_results(jsonb)        to service_role;
+grant execute on function lms_apply_fixture_results(jsonb, text)  to service_role;
 grant execute on function lms_set_fixture_result(int, text, text) to service_role;

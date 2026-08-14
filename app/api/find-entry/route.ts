@@ -15,6 +15,25 @@ import type { EntryStatus } from "@/lib/lms";
 //
 // This route never creates anything. Entry is organiser-mediated: an admin adds
 // entrants against a competition, so there is deliberately no self-signup here.
+//
+// TRUST MODEL: the phone number IS the credential. Knowing it returns that
+// person's pick links, with no second factor. That is a decision, not an
+// oversight, and it was taken deliberately at the pre-deploy hardening review:
+//
+//   - it is the same model the World Cup predictor ran on, proven with this
+//     same group of people;
+//   - the audience is a private club competition, not a public sign-up — the
+//     numbers are known to the organiser and to each other already;
+//   - what an attacker gains is low-value: someone's pick links, among people
+//     who see each other's picks on the board a round later anyway. There is no
+//     money movement, no personal data beyond a name, and no account to take
+//     over;
+//   - SMS OTP means a paid gateway, delivery failures on a Saturday afternoon,
+//     and a support burden — disproportionate for a £10 club fundraiser.
+//
+// Revisit if the scope grows: a public or paid sign-up, anything that lets this
+// endpoint change state, or a competition big enough that the organiser does not
+// know every entrant, all break the reasoning above rather than merely strain it.
 
 export const dynamic = "force-dynamic";
 

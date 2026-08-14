@@ -62,10 +62,20 @@ start() {
 
   # The suite applies db/lms-schema.sql and db/settlement-fn.sql itself; both are
   # re-runnable, so an existing database is fine to reuse.
-  psql -X -q -h 127.0.0.1 -p "$PORT" -U postgres -d postgres \
-    -c "select 1 from pg_database where datname = '$DB'" \
-    | grep -q 1 || psql -X -q -h 127.0.0.1 -p "$PORT" -U postgres -d postgres \
-        -c "create database $DB" >/dev/null
+  #
+  # -tAc and an exact comparison, rather than piping into grep: psql's default
+  # output is padded and decorated, and `grep -q 1` would match a "1" anywhere
+  # in it — a row count, a port number in a notice, a database whose name
+  # happens to contain a 1. That reads "already exists" for a database that does
+  # not, and the suite then fails to connect for no visible reason.
+  local exists
+  exists="$(psql -X -tAc "select 1 from pg_database where datname = '$DB'" \
+              -h 127.0.0.1 -p "$PORT" -U postgres -d postgres \
+            | tr -d '[:space:]')"
+  if [ "$exists" != "1" ]; then
+    psql -X -q -h 127.0.0.1 -p "$PORT" -U postgres -d postgres \
+      -c "create database $DB" >/dev/null
+  fi
 
   echo "$URL"
 }

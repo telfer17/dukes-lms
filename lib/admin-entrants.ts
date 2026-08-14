@@ -116,6 +116,30 @@ function sameName(a: string, b: string): boolean {
 }
 
 /**
+ * A stable identity for the entry being created, used to tie a duplicate
+ * confirmation to the person it was actually given for.
+ *
+ * Without it, "yes, add another" is just a boolean riding along on the form: an
+ * organiser who confirms for David Smith, then edits the fields to somebody
+ * else and submits, would have that second person created with no check at all.
+ * Minting the key with the notice and re-deriving it from the submitted fields
+ * means a confirmation only counts for the candidate it was issued against —
+ * anything else falls back to asking again, which is the safe direction.
+ *
+ * Normalised the same way the matching is, so a confirmation is not lost to a
+ * changed capital letter or a re-spaced phone number. JSON rather than a
+ * delimiter, so a name containing the separator cannot forge a different key.
+ */
+export function duplicateCandidateKey(candidate: DuplicateCandidate): string {
+  const phone = (candidate.phone ?? "").trim();
+  return JSON.stringify([
+    candidate.participantId ?? "",
+    candidate.name.trim().toLowerCase(),
+    phone === "" ? "" : (normaliseUkPhone(phone) ?? phone),
+  ]);
+}
+
+/**
  * The first entry in the ACTIVE competition that looks like the one being
  * created: the same person, the same name (case-insensitively), or the same
  * phone number.
