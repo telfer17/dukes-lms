@@ -181,7 +181,7 @@ export default function RulesPage() {
         <p>
           You then live or die by that team exactly as if you had picked it
           yourself, and it counts as used. An auto-assigned pick is shown as
-          &ldquo;auto&rdquo; on your pick page and on the board.
+          &ldquo;auto&rdquo; on the picks grid and on the board.
         </p>
         <p>
           If you hold more than one entry and miss both, each entry gets its own

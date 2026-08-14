@@ -9,10 +9,15 @@ const nextConfig: NextConfig = {
       // bookmarked on their phone. Redirects are checked before the filesystem
       // AND before proxy.ts, so a signed-out request lands on /admin/entrants
       // and is then bounced to the login as usual.
+      //
+      // 307, not 308: a permanent redirect is cached by the browser more or
+      // less forever, and the screen it points away from is one `git revert`
+      // from existing again. Temporary costs nothing here — this is an admin
+      // route with one user, not a hot public path.
       {
         source: "/admin/picks",
         destination: "/admin/entrants",
-        permanent: true,
+        permanent: false,
       },
     ];
   },

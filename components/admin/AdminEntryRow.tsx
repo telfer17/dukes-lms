@@ -83,6 +83,20 @@ export default function AdminEntryRow({
     null
   );
 
+  // "Alice: Arsenal saved." must not still be sitting there once the organiser
+  // has moved the select to Chelsea — read at a glance, that says Chelsea was
+  // saved when nothing was. useActionState has no reset, so the message is
+  // suppressed from the moment the selection changes until a fresh answer comes
+  // back. Adjusted during render, the same pattern NewEntryForm uses to clear
+  // itself: an effect would paint the stale line once before removing it.
+  const [selectionChanged, setSelectionChanged] = useState(false);
+  const [seenPickState, setSeenPickState] = useState(pickState);
+  if (pickState !== seenPickState) {
+    setSeenPickState(pickState);
+    setSelectionChanged(false);
+  }
+  const pickMessage = selectionChanged ? null : pickState;
+
   /** Run a row action and surface any failure next to the row. */
   function run(action: () => Promise<{ ok: true } | { error: string }>) {
     setRowError("");
@@ -152,6 +166,7 @@ export default function AdminEntryRow({
           <select
             name="team_id"
             defaultValue={picker.currentTeamId ?? ""}
+            onChange={() => setSelectionChanged(true)}
             disabled={pickPending}
             className="min-w-0 flex-1 rounded-md border border-gray-300 px-2 py-2.5 text-sm disabled:opacity-50"
             aria-label={`Pick for ${name}`}
@@ -217,14 +232,14 @@ export default function AdminEntryRow({
           {rowError}
         </p>
       )}
-      {pickState && "error" in pickState && (
+      {pickMessage && "error" in pickMessage && (
         <p role="alert" className="mt-1.5 text-xs text-red-600">
-          {pickState.error}
+          {pickMessage.error}
         </p>
       )}
-      {pickState && "ok" in pickState && (
+      {pickMessage && "ok" in pickMessage && (
         <p className="mt-1.5 text-xs font-medium text-green-700">
-          {pickState.ok}
+          {pickMessage.ok}
         </p>
       )}
     </li>

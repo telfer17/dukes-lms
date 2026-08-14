@@ -154,6 +154,12 @@ export default async function EntrantsPage() {
   let round: RoundRow | null = null;
   let pickError: string | null = null;
   let fixturesMissing = false;
+  // Evaluated ONCE, below, and reused by the rows, the banner and the chip.
+  // isRoundOpen defaults to `new Date()`, so calling it twice on a request that
+  // straddles the deadline gives two different answers — the header would say
+  // "open" while every row armed itself with the after-deadline confirm.
+  let open = false;
+  let deadlinePassed = false;
   const pickByEntry = new Map<
     string,
     { currentPick: CurrentPick | null; picker: PickControl | null }
@@ -186,8 +192,8 @@ export default async function EntrantsPage() {
         historyByEntry.set(pick.entry_id, list);
       }
 
-      const open = isRoundOpen(round);
-      const deadlinePassed = !open && round.status !== "settled";
+      open = isRoundOpen(round);
+      deadlinePassed = !open && round.status !== "settled";
 
       for (const entry of entries) {
         const current = pickThisRound.get(entry.id) ?? null;
@@ -234,6 +240,8 @@ export default async function EntrantsPage() {
     console.error("entrants pick state load failed:", e);
     pickError = "Could not read this round's picks.";
     round = null;
+    open = false;
+    deadlinePassed = false;
   }
 
   const roundKnown = round !== null && pickError === null;
@@ -286,9 +294,6 @@ export default async function EntrantsPage() {
   const ordered = orderForPicking(rows);
   const activeCount = rows.filter((r) => r.status === "active").length;
   const toPick = ordered.filter((r) => r.bucket === "to_pick").length;
-
-  const open = round ? isRoundOpen(round) : false;
-  const deadlinePassed = round ? !open && round.status !== "settled" : false;
 
   // A heading goes above the first row of each block. Derived by looking back
   // one row rather than carrying a running variable, so the list stays a pure

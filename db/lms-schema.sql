@@ -479,9 +479,13 @@ comment on view standing_board is
 -- Public (publishable key)  : teams, fixtures, rounds, competitions, standing_board
 -- Secret key only           : participants, entries, picks
 --
--- picks are secret-key-only on purpose: revealing them before a round locks
--- would let latecomers copy. A public picks view can be added in a later phase
--- once it can filter on rounds.status <> 'pending'.
+-- picks are secret-key-only for the IDS THEY CARRY, not for the picks. There is
+-- no secrecy rule (docs/LMS-RULES.md): a pick is public the moment it is made,
+-- /board says so in as many words, and /grid shows the current round's picks
+-- while it is still open. What must not leak is entry_id — the handle every
+-- write path takes — so the grid reads with the secret key and PROJECTS names
+-- and teams out (app/grid/page.tsx, lib/grid-projection.ts) rather than
+-- granting anon a view over this table.
 -- ----------------------------------------------------------------------------
 revoke all on participants from anon, authenticated;
 revoke all on entries      from anon, authenticated;

@@ -374,71 +374,82 @@ export async function setPickForEntry(
     return { error: "Something went wrong — please reload and try again." };
   }
 
-  const competition = await getActiveCompetition();
-  if (!competition) return { error: "No active competition." };
+  // Everything below can THROW, not just return an error: lib/lms-db fails
+  // loudly on a bad read, and an entryId that isn't a uuid reaches Postgres as
+  // a type error rather than an empty result. Uncaught, that leaves the form
+  // stuck on a generic boundary message with nothing next to the row. Caught
+  // here, it comes back through the same ActionState error path as every other
+  // refusal, and AdminEntryRow renders it inline under that entrant.
+  try {
+    const competition = await getActiveCompetition();
+    if (!competition) return { error: "No active competition." };
 
-  const entry = await getEntry(entryId);
-  if (!entry) return { error: "We couldn't find that entry." };
-  if (entry.competition_id !== competition.id) {
-    return { error: "That entry isn't in the active competition." };
-  }
+    const entry = await getEntry(entryId);
+    if (!entry) return { error: "We couldn't find that entry." };
+    if (entry.competition_id !== competition.id) {
+      return { error: "That entry isn't in the active competition." };
+    }
 
-  const rounds = await getRounds(competition.id);
-  // The round to write is the SERVER's current one — the form never chooses it.
-  // The form's round id is carried only to be COMPARED: if the page was
-  // rendered against round 3 and round 3 has since been settled, this write
-  // must not quietly land on round 4 instead. validatePick refuses the
-  // mismatch and the organiser refreshes.
-  const round = currentRound(rounds);
-  if (!round) return { error: "No round is open — every round is settled." };
+    const rounds = await getRounds(competition.id);
+    // The round to write is the SERVER's current one — the form never chooses
+    // it. The form's round id is carried only to be COMPARED: if the page was
+    // rendered against round 3 and round 3 has since been settled, this write
+    // must not quietly land on round 4 instead. validatePick refuses the
+    // mismatch and the organiser refreshes.
+    const round = currentRound(rounds);
+    if (!round) return { error: "No round is open — every round is settled." };
 
-  const fixtures = await getFixturesForMatchday(round.matchday);
-  const teams = await getTeams();
-  const roundNumberById = new Map(rounds.map((r) => [r.id, r.round_number]));
-  const picks = await getPicksForEntry(entryId);
-  const history = pickHistoryTeamIds(
-    picks.filter((p) => p.round_id !== round.id),
-    roundNumberById
-  );
+    const fixtures = await getFixturesForMatchday(round.matchday);
+    const teams = await getTeams();
+    const roundNumberById = new Map(rounds.map((r) => [r.id, r.round_number]));
+    const picks = await getPicksForEntry(entryId);
+    const history = pickHistoryTeamIds(
+      picks.filter((p) => p.round_id !== round.id),
+      roundNumberById
+    );
 
-  const verdict = validatePick({
-    entryStatus: entry.status,
-    round,
-    submittedRoundId: submittedRoundId || undefined,
-    fixtures,
-    teams,
-    history,
-    teamId,
-    allowAfterDeadline: true,
-  });
-  if (!verdict.ok) return { error: verdict.error };
+    const verdict = validatePick({
+      entryStatus: entry.status,
+      round,
+      submittedRoundId: submittedRoundId || undefined,
+      fixtures,
+      teams,
+      history,
+      teamId,
+      allowAfterDeadline: true,
+    });
+    if (!verdict.ok) return { error: verdict.error };
 
-  const { error } = await supabaseServer.from("picks").upsert(
-    {
-      competition_id: competition.id,
-      entry_id: entryId,
-      round_id: round.id,
-      team_id: teamId,
-      auto_assigned: false,
-      outcome: "pending",
-    },
-    { onConflict: "entry_id,round_id" }
-  );
+    const { error } = await supabaseServer.from("picks").upsert(
+      {
+        competition_id: competition.id,
+        entry_id: entryId,
+        round_id: round.id,
+        team_id: teamId,
+        auto_assigned: false,
+        outcome: "pending",
+      },
+      { onConflict: "entry_id,round_id" }
+    );
 
-  if (error) {
-    console.error("setPickForEntry failed:", error);
+    if (error) {
+      console.error("setPickForEntry failed:", error);
+      return { error: "Could not save that pick — please try again." };
+    }
+
+    revalidatePath("/admin/entrants");
+    revalidatePath("/grid");
+    revalidatePath("/board");
+
+    const team = teams.find((t) => t.id === teamId);
+    const who = entry.participant?.name ?? "entry";
+    return {
+      ok: `${who}: ${team?.name ?? "team"} saved${
+        verdict.deadlinePassed ? " (after the deadline)" : ""
+      }.`,
+    };
+  } catch (e) {
+    console.error("setPickForEntry threw:", e);
     return { error: "Could not save that pick — please try again." };
   }
-
-  revalidatePath("/admin/entrants");
-  revalidatePath("/grid");
-  revalidatePath("/board");
-
-  const team = teams.find((t) => t.id === teamId);
-  const who = entry.participant?.name ?? "entry";
-  return {
-    ok: `${who}: ${team?.name ?? "team"} saved${
-      verdict.deadlinePassed ? " (after the deadline)" : ""
-    }.`,
-  };
 }
