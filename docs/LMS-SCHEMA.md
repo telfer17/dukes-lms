@@ -237,11 +237,20 @@ can be added once the board needs it.
 
 ### `standing_board`
 
-The public "who's still in" view. Columns: `competition_id`, `entry_id`,
-`name`, `status`, `eliminated_round_number`. **No phone, no payment, no
-amounts.** It reads the private base tables safely because a Postgres view runs
-with its owner's privileges — the same trick the World Cup `participant_points`
-view used.
+The public "who's still in" view. Columns: `competition_id`, `name`, `status`,
+`eliminated_round_number`. **No phone, no payment, no amounts — and no
+`entries.id`.** It reads the private base tables safely because a Postgres view
+runs with its owner's privileges — the same trick the World Cup
+`participant_points` view used.
+
+`entries.id` was removed from this view during the launch review. It is the
+whole credential for `/pick/[entryId]`, so anything holding it can change that
+entry's pick; a column readable with the publishable key is the wrong place for
+it. The board never needed it — it renders names and statuses and keys off
+name+index (`lib/public-read.ts`, `tests/public-read.test.ts`). Because
+`create or replace view` cannot drop a column, the schema now does
+`drop view if exists standing_board` first; the file stays re-runnable, and the
+grants that follow are re-applied on every run.
 
 It spans all competitions, so callers must filter on `competition_id`.
 

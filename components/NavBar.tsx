@@ -22,6 +22,12 @@ export default function NavBar() {
           >
             The board
           </Link>
+          <Link
+            href="/rules"
+            className="py-1 text-gray-600 hover:text-gray-900"
+          >
+            Rules
+          </Link>
           <a
             href="https://footyfees.co.uk"
             target="_blank"

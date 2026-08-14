@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Dukes — Last Man Standing · OG card source</title>
+<!--
+  Source for public/og-image.png (1200x630 social share card).
+  Same club treatment as the World Cup predictor's card: black, the crest, a
+  cone-orange rule. Regenerate after editing this file, from the repo root:
+
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+      --headless --disable-gpu --hide-scrollbars --force-device-scale-factor=1 \
+      --allow-file-access-from-files --window-size=1200,630 \
+      --screenshot=public/og-image.png "file://$PWD/scripts/og-card.html"
+
+  The card carries no live numbers (pot, entrant count) on purpose — social
+  platforms cache the image, so anything that changes would be shown stale.
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1200px; height: 630px; }
+  body {
+    background: #0c0c0c;
+    background-image: radial-gradient(120% 120% at 22% 40%, #232323 0%, #0c0c0c 62%);
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+  }
+  .frame {
+    position: absolute;
+    inset: 26px;
+    border: 1px solid rgba(255,255,255,0.16);
+  }
+  .crest {
+    width: 340px;
+    height: 340px;
+    border-radius: 50%;
+    margin-left: 72px;
+    flex: none;
+    background: #fff url("../public/wellington.jpg") center/92% no-repeat;
+    box-shadow: 0 0 0 10px rgba(255,255,255,0.06);
+  }
+  .copy { margin-left: 62px; padding-right: 60px; }
+  .eyebrow {
+    font-size: 25px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    color: #efe7dc;
+    text-transform: uppercase;
+  }
+  .title {
+    margin-top: 20px;
+    font-family: "Helvetica Neue Condensed Black", "HelveticaNeue-CondensedBlack",
+                 "Avenir Next Condensed", "Helvetica Neue", sans-serif;
+    font-weight: 900;
+    font-stretch: condensed;
+    font-size: 116px;
+    line-height: 0.9;
+    letter-spacing: -0.005em;
+    color: #ffffff;
+    text-transform: uppercase;
+  }
+  .rule {
+    width: 118px;
+    height: 7px;
+    background: #ef7622;
+    margin: 34px 0 30px;
+  }
+  .sub {
+    font-size: 31px;
+    color: #ffffff;
+    letter-spacing: -0.01em;
+  }
+  .sub2 {
+    margin-top: 14px;
+    font-size: 27px;
+    color: #c9c4bd;
+    letter-spacing: -0.005em;
+  }
+</style>
+</head>
+<body>
+  <div class="frame"></div>
+  <div class="crest"></div>
+  <div class="copy">
+    <div class="eyebrow">Glasgow Wellington FC &middot; Dukes</div>
+    <div class="title">Last Man<br>Standing</div>
+    <div class="rule"></div>
+    <div class="sub">Pick one team a round. Win or you&rsquo;re out.</div>
+    <div class="sub2">&pound;10 to enter &nbsp;&middot;&nbsp; half the prize pot, half to the club</div>
+  </div>
+</body>
+</html>
