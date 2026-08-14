@@ -123,12 +123,23 @@ describe("validatePick — before the deadline", () => {
     });
   });
 
-  it("does not let the pick being REPLACED block itself", () => {
-    // The caller excludes this round's own pick from history; with that done,
-    // re-picking the same team is fine.
-    expect(validatePick(attempt({ history: [], teamId: 1 }))).toMatchObject({
-      ok: true,
+  it("does not let the pick being REPLACED block itself — but only when excluded", () => {
+    // Both sides of the caller's contract. Callers filter this round's own
+    // pick out of `history` before validating; the point of the test is that
+    // the exclusion is what makes re-picking work, not that team 1 happens to
+    // be pickable (the default case above already covers that).
+    const history = [3, 2]; // earlier rounds
+    const changingToTeam2 = { history, teamId: 2 };
+
+    // Team 2 is in history, so unexcluded it reads as already used…
+    expect(validatePick(attempt(changingToTeam2))).toMatchObject({
+      ok: false,
+      code: "team_used",
     });
+    // …and with THIS round's pick of team 2 excluded, changing to it is fine.
+    expect(
+      validatePick(attempt({ ...changingToTeam2, history: [3] }))
+    ).toMatchObject({ ok: true });
   });
 
   it("refuses once the deadline has passed", () => {
@@ -142,6 +153,67 @@ describe("validatePick — before the deadline", () => {
     expect(
       validatePick(attempt({ now: new Date(OPEN_ROUND.deadline) }))
     ).toMatchObject({ ok: false, code: "deadline_passed" });
+  });
+});
+
+describe("validatePick — the round the form was rendered for", () => {
+  // The admin screen sits open on a phone while rounds get settled. Without
+  // this check the write would land on whatever round became current, so the
+  // organiser would enter a pick for round 3 and silently create one in
+  // round 4. The refusal is what stops the write: the action returns before
+  // reaching the upsert, so nothing is written.
+  it("refuses a stale round id", () => {
+    expect(
+      validatePick(attempt({ submittedRoundId: "r0-settled-since" }))
+    ).toMatchObject({ ok: false, code: "round_moved_on" });
+  });
+
+  it("refuses a stale round id for the organiser too", () => {
+    expect(
+      validatePick(
+        attempt({
+          submittedRoundId: "r0-settled-since",
+          allowAfterDeadline: true,
+          now: AFTER,
+        })
+      )
+    ).toMatchObject({ ok: false, code: "round_moved_on" });
+  });
+
+  it("accepts the matching round id", () => {
+    expect(
+      validatePick(attempt({ submittedRoundId: OPEN_ROUND.id }))
+    ).toMatchObject({ ok: true });
+  });
+
+  it("skips the check when no round id was submitted", () => {
+    expect(
+      validatePick(attempt({ submittedRoundId: undefined }))
+    ).toMatchObject({ ok: true });
+  });
+});
+
+describe("validatePick — an unreadable deadline fails CLOSED", () => {
+  // `now >= Date.parse("nonsense")` is false, which would have read as "the
+  // round is open". A deadline nobody can parse is a data fault, not an
+  // absence of one.
+  const broken = { ...OPEN_ROUND, deadline: "not-a-date" };
+
+  it("rejects rather than treating it as open", () => {
+    expect(validatePick(attempt({ round: broken }))).toMatchObject({
+      ok: false,
+      code: "deadline_passed",
+    });
+  });
+
+  it("rejects even with the organiser override on", () => {
+    expect(
+      validatePick(attempt({ round: broken, allowAfterDeadline: true }))
+    ).toMatchObject({ ok: false, code: "deadline_passed" });
+  });
+
+  it("still accepts a valid deadline", () => {
+    expect(validatePick(attempt())).toMatchObject({ ok: true });
   });
 });
 

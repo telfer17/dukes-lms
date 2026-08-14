@@ -114,7 +114,10 @@ export default async function AdminPicksPage() {
     loadError = "Could not read picks.";
   }
 
-  const withoutPick = rows.filter((r) => r.currentTeamName === null).length;
+  // By id, not name: currentTeamName is also null when a team id fails to
+  // resolve to a name, which would report someone who HAS picked as one of the
+  // people still to chase.
+  const withoutPick = rows.filter((r) => r.currentTeamId === null).length;
   const open = round ? isRoundOpen(round) : false;
   const deadlinePassed = round ? !open && round.status !== "settled" : false;
 
@@ -211,6 +214,7 @@ export default async function AdminPicksPage() {
                   <PickForEntryRow
                     key={row.entryId}
                     entryId={row.entryId}
+                    roundId={round.id}
                     name={row.name}
                     currentTeamId={row.currentTeamId}
                     currentTeamName={row.currentTeamName}

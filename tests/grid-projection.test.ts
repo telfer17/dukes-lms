@@ -108,11 +108,14 @@ describe("buildGridRows", () => {
   });
 
   it("keeps two entries of the same person as separate rows", () => {
+    // The same NAME, twice — the actual multi-entry case. Rows carry no entry
+    // id, so nothing but the row count distinguishes them; collapsing on name
+    // would silently drop one person's second entry from the grid.
     const { rows } = buildGridRows({
       rounds,
       entries: [
-        entry({ id: ENTRY_UUID, participant: { name: "David Smith 1" } }),
-        entry({ id: ENTRY_UUID_2, participant: { name: "David Smith 2" } }),
+        entry({ id: ENTRY_UUID, participant: { name: "David Smith" } }),
+        entry({ id: ENTRY_UUID_2, participant: { name: "David Smith" } }),
       ],
       picks: [
         { ...picks[0], entry_id: ENTRY_UUID },
@@ -121,6 +124,8 @@ describe("buildGridRows", () => {
       teamNameById,
     });
     expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.name)).toEqual(["David Smith", "David Smith"]);
+    // Each row keeps its OWN entry's pick.
     expect(rows[0].cells[0]?.team).toBe("Arsenal");
     expect(rows[1].cells[0]?.team).toBe("Everton");
   });

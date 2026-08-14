@@ -59,6 +59,9 @@ export async function submitPick(
   const verdict = validatePick({
     entryStatus: entry.status,
     round,
+    // Always equal here — `round` was looked up BY this id — so it can only
+    // pass. Passed anyway so both callers use the validator identically.
+    submittedRoundId: roundId,
     fixtures,
     teams,
     history,
@@ -70,12 +73,22 @@ export async function submitPick(
   // One pick per (entry, round) is a DB constraint — upsert on it so changing a
   // pick before the deadline replaces rather than collides.
   //
-  // Deliberately NOT wrapped in a transactional RPC. The interleave this would
-  // guard against needs a pick landing mid-settlement, and settlement now
-  // refuses to run on an open round while this route refuses to write to a
-  // closed one — so the two can't overlap. Making settlement genuinely atomic
-  // via a Postgres function is scheduled for the pre-season hardening pass,
-  // and this upsert moves inside it at that point.
+  // DELIBERATELY NOT one transaction with the validation above, and the same
+  // disposition as the three earlier transaction findings on this file.
+  //
+  // The residual race is a pick landing between another connection reading the
+  // state and writing it. Settlement is what would be damaged by that, and
+  // settlement defends itself: lms_settle_round takes the advisory lock and
+  // FINGERPRINTS the picks it planned against (db/settlement-fn.sql). A pick
+  // that lands after the plan was computed fails that validation, so the
+  // settle applies nothing and the organiser re-runs against fresh state —
+  // the pick is kept, not lost. In the other direction a pick can never land
+  // against a settled round: validatePick refuses a settled round here, and
+  // settlement re-validates inside its own transaction regardless.
+  //
+  // So the failure mode is a re-run, not a corrupt round. Wrapping this in an
+  // RPC remains the documented pattern (see the settlement functions) if a
+  // reason to need true atomicity ever shows up.
   const { error } = await supabaseServer.from("picks").upsert(
     {
       competition_id: entry.competition_id,

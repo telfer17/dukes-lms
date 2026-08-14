@@ -41,10 +41,21 @@ export async function setPickForEntry(
   await requireAdmin();
 
   const entryId = String(formData.get("entry_id") ?? "").trim();
-  const teamId = Number(formData.get("team_id"));
+  const submittedRoundId = String(formData.get("round_id") ?? "").trim();
+  const rawTeamId = String(formData.get("team_id") ?? "").trim();
 
-  if (!entryId || !Number.isInteger(teamId)) {
-    return { error: "Pick a team first." };
+  if (!entryId) {
+    return { error: "Something went wrong — please reload and try again." };
+  }
+  // Blank is checked BEFORE converting: Number("") is 0, and 0 is an integer,
+  // so an empty select would sail past a NaN check and then fail deeper in
+  // with "that team isn't playing this round" — a confusing answer to
+  // "you didn't choose anyone".
+  if (rawTeamId === "") return { error: "Pick a team first." };
+
+  const teamId = Number(rawTeamId);
+  if (!Number.isInteger(teamId)) {
+    return { error: "Something went wrong — please reload and try again." };
   }
 
   const competition = await getActiveCompetition();
@@ -57,8 +68,11 @@ export async function setPickForEntry(
   }
 
   const rounds = await getRounds(competition.id);
-  // The round is taken from the SERVER's idea of where the competition is, not
-  // from the form: a stale tab must not be able to write into a previous round.
+  // The round to write is the SERVER's current one — the form never chooses it.
+  // The form's round id is carried only to be COMPARED: if the page was
+  // rendered against round 3 and round 3 has since been settled, this write
+  // must not quietly land on round 4 instead. validatePick refuses the
+  // mismatch and the organiser refreshes.
   const round = currentRound(rounds);
   if (!round) return { error: "No round is open — every round is settled." };
 
@@ -74,6 +88,7 @@ export async function setPickForEntry(
   const verdict = validatePick({
     entryStatus: entry.status,
     round,
+    submittedRoundId: submittedRoundId || undefined,
     fixtures,
     teams,
     history,

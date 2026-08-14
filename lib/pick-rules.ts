@@ -32,6 +32,13 @@ export type PickAttempt = {
   entryStatus: "active" | "eliminated" | "winner";
   /** Undefined when the round id did not belong to the entry's competition. */
   round: PickRoundState | undefined;
+  /**
+   * The round the FORM was rendered against, if the caller has one. The admin
+   * screen sits open on a phone while rounds get settled; without this the
+   * write would silently land on whatever round became current in the
+   * meantime — a pick nobody asked for, in a round nobody was looking at.
+   */
+  submittedRoundId?: string;
   fixtures: Fixture[];
   teams: Team[];
   /**
@@ -48,6 +55,7 @@ export type PickAttempt = {
 export type PickRejection =
   | "entry_not_active"
   | "unknown_round"
+  | "round_moved_on"
   | "round_settled"
   | "deadline_passed"
   | "no_fixtures"
@@ -61,6 +69,8 @@ export type PickVerdict =
 const MESSAGES: Record<PickRejection, string> = {
   entry_not_active: "This entry is out — no more picks.",
   unknown_round: "That round doesn't belong to this competition.",
+  round_moved_on:
+    "This round has moved on since the page loaded — refresh and try again.",
   round_settled: "That round has been settled — its picks are final.",
   deadline_passed: "That round is closed — the deadline has passed.",
   no_fixtures: "No fixtures loaded for this matchday yet.",
@@ -76,6 +86,7 @@ export function validatePick(attempt: PickAttempt): PickVerdict {
   const {
     entryStatus,
     round,
+    submittedRoundId,
     fixtures,
     teams,
     history,
@@ -86,12 +97,24 @@ export function validatePick(attempt: PickAttempt): PickVerdict {
 
   if (entryStatus !== "active") return reject("entry_not_active");
   if (!round) return reject("unknown_round");
+  if (submittedRoundId !== undefined && submittedRoundId !== round.id) {
+    return reject("round_moved_on");
+  }
 
   // Settled is final for everyone. Checked before the deadline branch so the
   // override can never reach it.
   if (round.status === "settled") return reject("round_settled");
 
-  const deadlinePassed = now.getTime() >= Date.parse(round.deadline);
+  // A deadline that will not parse is not "no deadline". `now >= NaN` is
+  // false, which would have read as "the round is open" and let a pick through
+  // on a round whose deadline nobody can determine. Fail closed, and closed to
+  // the organiser too: the override is for a deadline that has passed, not for
+  // one that cannot be read at all — that is a data fault to fix, not to
+  // work around.
+  const deadlineMs = Date.parse(round.deadline);
+  if (Number.isNaN(deadlineMs)) return reject("deadline_passed");
+
+  const deadlinePassed = now.getTime() >= deadlineMs;
   if (deadlinePassed && !allowAfterDeadline) return reject("deadline_passed");
 
   if (fixtures.length === 0) return reject("no_fixtures");

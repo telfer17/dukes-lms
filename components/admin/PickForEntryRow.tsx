@@ -18,6 +18,7 @@ export type SelectableTeam = { id: number; name: string };
  */
 export default function PickForEntryRow({
   entryId,
+  roundId,
   name,
   currentTeamId,
   currentTeamName,
@@ -26,6 +27,9 @@ export default function PickForEntryRow({
   deadlinePassed,
 }: {
   entryId: string;
+  /** The round this row was RENDERED for — compared server-side, never used
+   *  to choose which round to write. */
+  roundId: string;
   name: string;
   currentTeamId: number | null;
   currentTeamName: string | null;
@@ -74,6 +78,7 @@ export default function PickForEntryRow({
         }}
       >
         <input type="hidden" name="entry_id" value={entryId} />
+        <input type="hidden" name="round_id" value={roundId} />
         <select
           name="team_id"
           defaultValue={currentTeamId ?? ""}
