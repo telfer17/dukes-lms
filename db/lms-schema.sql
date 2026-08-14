@@ -437,15 +437,25 @@ create index if not exists fixtures_away_team_idx      on fixtures (away_team_id
 -- ----------------------------------------------------------------------------
 -- Public-safe board view.
 --
--- Exposes name + status only. NO phone, NO payment. Safe to read with the
--- publishable (anon) key. Views run with the owner's privileges, so this keeps
--- working after the REVOKEs below strip anon's access to the base tables —
--- the same pattern the World Cup predictor used.
+-- Exposes name + status only. NO phone, NO payment, and NO entries.id. Safe to
+-- read with the publishable (anon) key. Views run with the owner's privileges,
+-- so this keeps working after the REVOKEs below strip anon's access to the base
+-- tables — the same pattern the World Cup predictor used.
+--
+-- entries.id is DELIBERATELY not here. It is the whole credential for
+-- /pick/[entryId] — anyone holding it can change that entry's pick — so it must
+-- never be reachable with a key that is safe to publish. The board has no use
+-- for it either: it renders names and statuses, and React keys off name+index.
+--
+-- The drop-then-create is what lets that column be REMOVED on a re-run:
+-- `create or replace view` can add trailing columns but cannot drop one. The
+-- file stays re-runnable, which is the property that matters.
 -- ----------------------------------------------------------------------------
-create or replace view standing_board as
+drop view if exists standing_board;
+
+create view standing_board as
 select
   e.competition_id,
-  e.id                  as entry_id,
   p.name                as name,
   e.status              as status,
   r.round_number        as eliminated_round_number
@@ -454,7 +464,7 @@ join participants p on p.id = e.participant_id
 left join rounds r  on r.id = e.eliminated_round_id;
 
 comment on view standing_board is
-  'Public "who is still in" board: name + status only. Deliberately excludes phone and payment.';
+  'Public "who is still in" board: name + status only. Deliberately excludes phone, payment and entries.id (the pick-link credential).';
 
 
 -- ----------------------------------------------------------------------------

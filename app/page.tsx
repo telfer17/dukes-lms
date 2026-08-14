@@ -1,31 +1,318 @@
 import Image from "next/image";
 import Link from "next/link";
+import DeadlineCountdown from "@/components/DeadlineCountdown";
+import fixtureData from "@/data/fixtures-2026-27.json";
+import {
+  BASE_ENTRY_PENCE,
+  clubPence,
+  formatPence,
+  potPence,
+} from "@/lib/competition";
+import { currentRound, isRoundOpen } from "@/lib/lms-db";
+import {
+  readPublicBoard,
+  readPublicCompetition,
+  readPublicRounds,
+  type BoardRow,
+} from "@/lib/public-read";
 
-// Deliberately static: no database access, so the app always boots while the
-// Last Man Standing schema and screens are still being built.
-export default function Home() {
+// Live state — never cached.
+export const dynamic = "force-dynamic";
+
+const deadlineFormat = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+const kickoffFormat = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+// Season start read off the committed fixture list rather than typed in, so
+// the "starts soon" screen can't drift from the fixtures the rounds are built
+// from. Kickoffs are UTC instants; the formatter puts them back into UK time.
+const seasonKickoff = fixtureData.fixtures
+  .filter((f) => f.matchday === 1)
+  .map((f) => f.kickoff)
+  .sort()[0];
+
+// The money, straight from the rules maths — one £10 entry through the same
+// functions the pot and the admin screens use, so the split shown here can
+// never drift from the split actually applied.
+const oneEntry = [{ paid: true, amount_paid_pence: BASE_ENTRY_PENCE }];
+const ENTRY_LABEL = formatPence(BASE_ENTRY_PENCE);
+const POT_SHARE_LABEL = formatPence(potPence(0, oneEntry));
+const CLUB_SHARE_LABEL = formatPence(clubPence(oneEntry));
+
+type LiveState =
+  | { kind: "preseason" }
+  | { kind: "between" }
+  | { kind: "unavailable" }
+  | {
+      kind: "running";
+      label: string;
+      alive: number;
+      total: number;
+      round: { number: number; matchday: number; deadline: string; open: boolean } | null;
+      winner: string | null;
+    };
+
+/**
+ * "No competition" is two different facts and they must not share a screen.
+ *
+ * Before the season starts, it means "starts soon, here is the first kick-off".
+ * AFTER it starts it means something else entirely — the competition rolled
+ * over and the next one isn't up yet, or the season is done — and telling a
+ * player in December that the season kicks off on 21 August is a straight lie
+ * that also buries the real answer (ask the organiser). readPublicCompetition
+ * only returns active/won, so a rolled_over competition lands here too.
+ */
+function noCompetitionState(): LiveState {
+  return Date.now() < Date.parse(seasonKickoff)
+    ? { kind: "preseason" }
+    : { kind: "between" };
+}
+
+async function readLiveState(): Promise<LiveState> {
+  const { data: competition, error } = await readPublicCompetition();
+  if (error) {
+    console.error("home: competition read failed:", error);
+    return { kind: "unavailable" };
+  }
+  if (!competition) return noCompetitionState();
+
+  const [boardRes, roundsRes] = await Promise.all([
+    readPublicBoard(competition.id),
+    readPublicRounds(competition.id),
+  ]);
+
+  // Half a read is worse than none: "0 still standing" on a live competition
+  // would be a lie, so a failed read says so instead.
+  if (boardRes.error || roundsRes.error) {
+    console.error("home: live state read failed:", boardRes.error ?? roundsRes.error);
+    return { kind: "unavailable" };
+  }
+
+  const board: BoardRow[] = boardRes.data ?? [];
+  const round = currentRound(roundsRes.data ?? []);
+  const winner = board.find((r) => r.status === "winner") ?? null;
+
+  return {
+    kind: "running",
+    label: competition.label,
+    alive: board.filter((r) => r.status === "active" || r.status === "winner").length,
+    total: board.length,
+    round: round
+      ? {
+          number: round.round_number,
+          matchday: round.matchday,
+          deadline: round.deadline,
+          open: isRoundOpen(round),
+        }
+      : null,
+    winner: winner?.name ?? null,
+  };
+}
+
+const howItWorks = [
+  {
+    title: "Pick one team a round",
+    body: "Every round is a Premier League matchday. Pick one team from that matchday to win.",
+  },
+  {
+    title: "Win and you're through",
+    body: "A draw or a defeat and you're out. No second chances, no points, no tie-breaks.",
+  },
+  {
+    title: "Never the same team twice",
+    body: "Once you've picked a team it's gone for good — until you've used all 20, when the whole list comes back.",
+  },
+  {
+    title: "Last one standing takes the pot",
+    body: "If everyone goes out in the same round nobody wins: the pot rolls over into a new competition.",
+  },
+];
+
+export default async function Home() {
+  // supabase-js reports query failures in `error`, but a DNS or TLS failure
+  // still throws. That must land on the honest "can't load" panel rather than
+  // replacing the whole homepage — including how it works and the entry
+  // price, which are true whatever the database is doing — with an error page.
+  const live = await readLiveState().catch((e): LiveState => {
+    console.error("home: live state threw:", e);
+    return { kind: "unavailable" };
+  });
+
   return (
-    <main className="mx-auto flex max-w-md flex-1 flex-col justify-center px-4 py-24 text-center">
-      <Image
-        src="/wellington.jpg"
-        alt="Glasgow Wellington logo"
-        width={160}
-        height={160}
-        priority
-        className="mx-auto rounded-full"
-      />
-      <h1 className="mt-6 text-3xl font-bold tracking-tight sm:text-4xl">
-        Dukes — Last Man Standing
-      </h1>
-      <p className="mt-3 text-lg text-gray-600">Coming soon</p>
-      <p className="mt-6">
-        <Link
-          href="/board"
-          className="inline-block rounded-md border-2 border-blue-600 px-6 py-3 font-semibold text-blue-600 hover:bg-blue-50"
-        >
-          See who&apos;s still standing
-        </Link>
-      </p>
+    <main className="mx-auto max-w-4xl px-4">
+      {/* ---- Hero ---- */}
+      <section className="pt-12 pb-10 text-center sm:pt-16">
+        <Image
+          src="/wellington.jpg"
+          alt="Glasgow Wellington logo"
+          width={140}
+          height={140}
+          priority
+          className="mx-auto rounded-full"
+        />
+        <h1 className="mt-6 text-3xl font-bold tracking-tight sm:text-5xl">
+          Dukes — Last Man Standing
+        </h1>
+        <p className="mx-auto mt-4 max-w-xl text-lg text-gray-600">
+          One Premier League team each round. Win and you&apos;re through, draw
+          or lose and you&apos;re out. The last one standing takes the pot.
+        </p>
+
+        {/* ---- Live state, server-derived ---- */}
+        <div className="mx-auto mt-8 max-w-lg">
+          {live.kind === "unavailable" && (
+            <div className="rounded-lg border border-gray-200 p-5 text-sm text-gray-500">
+              The live state can&apos;t be loaded right now. Try again in a
+              minute.
+            </div>
+          )}
+
+          {live.kind === "preseason" && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-5">
+              <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+                Starts soon
+              </p>
+              <p className="mt-2 font-semibold">
+                Season kicks off {kickoffFormat.format(new Date(seasonKickoff))}
+              </p>
+              <p className="mt-1 text-sm text-gray-600">
+                That first kick-off is the round 1 deadline. Entries are taken by
+                the organiser — message your club contact to get in.
+              </p>
+            </div>
+          )}
+
+          {live.kind === "between" && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-5">
+              <p className="text-xs font-bold uppercase tracking-wide text-gray-500">
+                Between competitions
+              </p>
+              <p className="mt-2 text-sm text-gray-600">
+                No competition is running at the moment. If the last one rolled
+                over, the next one starts once the organiser opens it — your club
+                contact will know.
+              </p>
+            </div>
+          )}
+
+          {live.kind === "running" && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-5">
+              <p className="text-xs font-bold uppercase tracking-wide text-blue-700">
+                {live.label}
+              </p>
+
+              {live.winner ? (
+                <p className="mt-2 text-2xl font-bold text-blue-900">
+                  {live.winner} is the Last Man Standing
+                </p>
+              ) : (
+                <>
+                  <p className="mt-2 text-3xl font-bold tabular-nums text-blue-900">
+                    {live.alive}{" "}
+                    <span className="text-xl font-semibold">
+                      of {live.total} still standing
+                    </span>
+                  </p>
+                  {live.round && (
+                    <p className="mt-3 text-sm text-blue-900">
+                      <span className="font-semibold">
+                        Round {live.round.number}
+                      </span>{" "}
+                      <span className="text-blue-700">
+                        (matchday {live.round.matchday})
+                      </span>
+                      <br />
+                      {live.round.open ? (
+                        <>
+                          Picks lock in{" "}
+                          <DeadlineCountdown deadline={live.round.deadline} /> —{" "}
+                          {deadlineFormat.format(new Date(live.round.deadline))}
+                        </>
+                      ) : (
+                        <>
+                          Locked —{" "}
+                          {deadlineFormat.format(new Date(live.round.deadline))}
+                        </>
+                      )}
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ---- CTAs ---- */}
+        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+          <Link
+            href="/board"
+            className="rounded-md bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-700"
+          >
+            See who&apos;s still in
+          </Link>
+          <Link
+            href="/find"
+            className="rounded-md border-2 border-blue-600 px-6 py-3 font-semibold text-blue-600 hover:bg-blue-50"
+          >
+            Lost your pick link?
+          </Link>
+        </div>
+      </section>
+
+      {/* ---- How it works ---- */}
+      <section
+        id="how-it-works"
+        className="scroll-mt-20 border-t border-gray-200 py-12"
+      >
+        <h2 className="text-2xl font-bold">How it works</h2>
+
+        <div className="mt-6 grid gap-6 sm:grid-cols-2">
+          {howItWorks.map((card) => (
+            <div key={card.title} className="rounded-md border border-gray-200 p-5">
+              <h3 className="font-semibold">{card.title}</h3>
+              <p className="mt-2 text-sm text-gray-600">{card.body}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-6 rounded-md border border-gray-200 p-5">
+          <h3 className="font-semibold">{ENTRY_LABEL} to enter</h3>
+          <p className="mt-2 text-sm text-gray-600">
+            {POT_SHARE_LABEL} goes into the prize pot, {CLUB_SHARE_LABEL} goes to
+            the club. The pot is winner-takes-all — no second or third places.
+          </p>
+          <p className="mt-2 text-sm text-gray-600">
+            Entries go through the organiser: message your club contact and
+            you&apos;ll get a personal pick link back. You can take more than one
+            entry, as long as you pay a full entry for each — they run completely
+            independently of each other.
+          </p>
+        </div>
+
+        <p className="mt-6 text-sm text-gray-600">
+          Missed a deadline? Picked a team whose game got called off?{" "}
+          <Link href="/rules" className="font-semibold text-blue-600 hover:underline">
+            The full rules
+          </Link>{" "}
+          cover every one of those, and settle any argument later in the season.
+        </p>
+      </section>
     </main>
   );
 }

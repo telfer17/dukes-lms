@@ -9,9 +9,12 @@ import {
   getPicksForRound,
   getTeams,
   isRoundOpen,
-  type RoundRow,
 } from "@/lib/lms-db";
-import { supabaseBrowser } from "@/lib/supabase-browser";
+import {
+  readPublicBoard,
+  readPublicCompetition,
+  readPublicRounds,
+} from "@/lib/public-read";
 
 export const dynamic = "force-dynamic";
 
@@ -29,37 +32,29 @@ const deadlineFormat = new Intl.DateTimeFormat("en-GB", {
   hour12: false,
 });
 
-// Public-safe shapes, read with the PUBLISHABLE key. standing_board exposes
-// name + status only — no phone, no payment. See docs/LMS-SCHEMA.md.
-type BoardRow = {
-  competition_id: string;
-  entry_id: string;
-  name: string;
-  status: "active" | "eliminated" | "winner";
-  eliminated_round_number: number | null;
-};
-
-type PublicCompetition = {
-  id: string;
-  label: string;
-  status: string;
-  rollover_count: number;
-  pot_carried_in_pence: number;
-};
-
 export default async function BoardPage() {
-  // ---- public reads: publishable key only ----
-  const { data: competitions, error: compError } = await supabaseBrowser
-    .from("competitions")
-    .select("id, label, status, rollover_count, pot_carried_in_pence")
-    .in("status", ["active", "won"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .returns<PublicCompetition[]>();
+  // ---- public reads: publishable key only (lib/public-read.ts) ----
+  const { data: competition, error: compError } = await readPublicCompetition();
 
-  const competition = competitions?.[0] ?? null;
+  // A failed lookup is NOT "no competition". Saying "check back soon" to
+  // someone whose competition is running, because the database was briefly
+  // unreachable, is the same lie as an empty board — and it sends them to the
+  // organiser asking why they've been dropped. Two reads, two answers.
+  if (compError) {
+    console.error("board: competition read failed:", compError);
+    return (
+      <main className="mx-auto max-w-2xl px-4 py-16 text-center">
+        <h1 className="text-2xl font-bold tracking-tight">
+          Dukes — Last Man Standing
+        </h1>
+        <p className="mt-3 text-gray-600">
+          The board can&apos;t be loaded right now. Try again in a minute.
+        </p>
+      </main>
+    );
+  }
 
-  if (compError || !competition) {
+  if (!competition) {
     return (
       <main className="mx-auto max-w-2xl px-4 py-16 text-center">
         <h1 className="text-2xl font-bold tracking-tight">
@@ -73,17 +68,8 @@ export default async function BoardPage() {
   }
 
   const [boardRes, roundsRes] = await Promise.all([
-    supabaseBrowser
-      .from("standing_board")
-      .select("competition_id, entry_id, name, status, eliminated_round_number")
-      .eq("competition_id", competition.id)
-      .returns<BoardRow[]>(),
-    supabaseBrowser
-      .from("rounds")
-      .select("id, competition_id, round_number, matchday, deadline, status")
-      .eq("competition_id", competition.id)
-      .order("round_number")
-      .returns<RoundRow[]>(),
+    readPublicBoard(competition.id),
+    readPublicRounds(competition.id),
   ]);
 
   // A failed read must not render as an empty competition — "0 of 53 still
@@ -227,9 +213,12 @@ export default async function BoardPage() {
         <BoardTabs
           active={
             <ul className="divide-y divide-gray-200 rounded-md border border-gray-200">
-              {active.map((row) => (
+              {/* Keyed by name+index, NOT the entry id: a React key is
+                  serialised into the RSC payload, and entries.id is the pick
+                  link. See lib/public-read.ts. */}
+              {active.map((row, i) => (
                 <li
-                  key={row.entry_id}
+                  key={`${row.name}-${i}`}
                   className="flex items-center justify-between gap-3 p-3 text-sm"
                 >
                   <span className="min-w-0 truncate font-medium">{row.name}</span>
@@ -247,9 +236,9 @@ export default async function BoardPage() {
               </p>
             ) : (
               <ul className="divide-y divide-gray-200 rounded-md border border-gray-200">
-                {out.map((row) => (
+                {out.map((row, i) => (
                   <li
-                    key={row.entry_id}
+                    key={`${row.name}-${i}`}
                     className="flex items-center justify-between gap-3 p-3 text-sm text-gray-500"
                   >
                     <span className="min-w-0 truncate">{row.name}</span>
