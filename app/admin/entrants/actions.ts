@@ -3,11 +3,49 @@
 import { revalidatePath } from "next/cache";
 import type { ActionResult, ActionState } from "@/lib/action-state";
 import { requireAdmin } from "@/lib/admin-auth";
+import {
+  duplicateCandidateKey,
+  findDuplicateEntrant,
+  type ExistingEntrant,
+} from "@/lib/admin-entrants";
 import { expectedBuyInPence } from "@/lib/competition";
 import { getActiveCompetition } from "@/lib/lms-db";
 import { normaliseUkPhone } from "@/lib/phone";
 import { partitionByNewcomer } from "@/lib/group-payment";
 import { supabaseServer } from "@/lib/supabase-server";
+
+/**
+ * Everyone already entered in the active competition, as the duplicate check
+ * wants them. Small by nature — a pub competition, not a mailing list — so this
+ * reads the whole set and compares in TypeScript rather than asking PostgREST
+ * for a case-insensitive match across an embedded table.
+ */
+async function existingEntrants(
+  competitionId: string
+): Promise<ExistingEntrant[]> {
+  const { data, error } = await supabaseServer
+    .from("entries")
+    .select("participant_id, participant:participants!inner (name, phone)")
+    .eq("competition_id", competitionId);
+
+  if (error) {
+    console.error("duplicate-entrant lookup failed:", error);
+    // A failed lookup must not silently turn the notice off — the caller
+    // treats a throw as "could not check" rather than "no duplicates".
+    throw new Error(error.message);
+  }
+
+  const rows = (data ?? []) as unknown as {
+    participant_id: string;
+    participant: { name: string; phone: string | null } | null;
+  }[];
+
+  return rows.map((row) => ({
+    participantId: row.participant_id,
+    name: row.participant?.name ?? "",
+    phone: row.participant?.phone ?? null,
+  }));
+}
 
 /**
  * Add an entry to the active competition.
@@ -16,6 +54,13 @@ import { supabaseServer } from "@/lib/supabase-server";
  * person first — the person and the entry are separate records (see
  * docs/LMS-SCHEMA.md). Multi-entry is allowed by design: the same person may
  * hold several entries, each paid for and surviving independently.
+ *
+ * That last part is why the duplicate check below is a NOTICE and not a block.
+ * A second entry for the same person is a legitimate, paid-for thing
+ * (docs/LMS-RULES.md); adding the same person twice by accident is not. The two
+ * are indistinguishable from here, so the action asks once and does whatever it
+ * is told. No schema change: nothing about a duplicate is illegal, so nothing
+ * about it belongs in a constraint.
  */
 export async function createEntry(
   _prev: ActionState,
@@ -52,15 +97,73 @@ export async function createEntry(
     return { error: "Amount paid must be 0 or more." };
   }
 
+  // Phone is optional; normalise when it's a clean UK number so the
+  // find-entry lookup keeps working, otherwise store as written.
+  const phone = phoneRaw === "" ? null : (normaliseUkPhone(phoneRaw) ?? phoneRaw);
+
+  // ---- soft duplicate notice ----
+  //
+  // Work out WHO this entry is for first. When an existing person was chosen,
+  // their own name and number are what to compare — the name/phone fields are
+  // hidden in that mode and arrive empty.
+  let candidateName = name;
+  let candidatePhone = phone;
+
+  if (existingParticipantId) {
+    const { data: person, error } = await supabaseServer
+      .from("participants")
+      .select("name, phone")
+      .eq("id", existingParticipantId)
+      .maybeSingle<{ name: string; phone: string | null }>();
+    if (error) {
+      console.error("createEntry participant lookup failed:", error);
+      return { error: "Could not read that person." };
+    }
+    if (!person) return { error: "That person no longer exists." };
+    candidateName = person.name;
+    candidatePhone = person.phone;
+  }
+
+  const candidate = {
+    participantId: existingParticipantId || null,
+    name: candidateName,
+    phone: candidatePhone,
+  };
+
+  // A confirmation only counts for the person it was given for. The form sends
+  // back the token minted with the notice; if the organiser edited the fields
+  // in between, it no longer matches what is being submitted and we ask again.
+  // The client clears the notice on those edits too, but this is what makes it
+  // safe — the client cannot be the thing enforcing it.
+  const candidateKey = duplicateCandidateKey(candidate);
+  const confirmed = formData.get("confirm_duplicate") === candidateKey;
+
+  if (!confirmed) {
+    let duplicate: ExistingEntrant | null = null;
+    try {
+      duplicate = findDuplicateEntrant(
+        candidate,
+        await existingEntrants(competition.id)
+      );
+    } catch {
+      return {
+        error:
+          "Could not check for an existing entry — nothing was added. Try again.",
+      };
+    }
+
+    if (duplicate) {
+      return {
+        notice: `${duplicate.name} already has an entry in this competition — add another?`,
+        confirm: candidateKey,
+      };
+    }
+  }
+
   let participantId = existingParticipantId;
   let createdParticipant = false;
 
   if (!participantId) {
-    // Phone is optional; normalise when it's a clean UK number so the
-    // find-entry lookup keeps working, otherwise store as written.
-    const phone =
-      phoneRaw === "" ? null : (normaliseUkPhone(phoneRaw) ?? phoneRaw);
-
     const { data, error } = await supabaseServer
       .from("participants")
       .insert({ name, club_contact: clubContact, phone })

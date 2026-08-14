@@ -37,6 +37,8 @@ type Report = {
     roundSettled: { fixtureId: number; round: number }[];
     notReportedYet: number;
     abandoned: { fixtureId: number; statusShort: string }[];
+    /** A settlement held the write lock, so this run wrote nothing at all. */
+    settlementInProgress: boolean;
   };
   unmapped: string[];
   errors: string[];
@@ -78,6 +80,7 @@ export async function GET(request: Request) {
       roundSettled: [],
       notReportedYet: 0,
       abandoned: [],
+      settlementInProgress: false,
     },
     unmapped: [],
     errors: [],
@@ -140,6 +143,11 @@ export async function GET(request: Request) {
   //
   // A settled round's results were already applied to players, so we do not
   // add to one for the competition currently running.
+  //
+  // This pass is a PRE-FILTER, not the guard itself: it keeps settled matchdays
+  // out of the feed matching and reports them clearly. The authoritative check
+  // is re-read inside the write transaction (step 4), because anything read
+  // here can be settled before the writes land.
   //
   // Scoped to the ACTIVE competition on purpose. rounds_unique_matchday is
   // unique (competition_id, matchday), so the same matchday legitimately
@@ -278,51 +286,87 @@ export async function GET(request: Request) {
   report.skipped.notReportedYet = outcome.notReported.length;
   report.skipped.abandoned = outcome.abandoned;
 
-  for (const update of outcome.updates) {
-    // No transaction or shared settlement lock here, deliberately. The write
-    // re-asserts BOTH preconditions it read — still scheduled AND still
-    // unresulted — so a decision made against stale state simply lands as a
-    // no-op; the settled-round guard above and settlement's own refusal to
-    // re-run a settled round contain what is left. A genuine shared lock
-    // belongs with the settlement-RPC hardening item, whose design must take
-    // this guard with it (see app/admin/results/actions.ts).
+  if (outcome.updates.length > 0) {
+    // ONE transaction, under the SAME advisory lock settlement takes
+    // (db/settlement-fn.sql). The settled-round guard read at step 2 is a
+    // time-of-check/time-of-use gap on its own: a settle can commit between
+    // that read and these writes, and a result landing in a round whose
+    // eliminations were already computed silently desyncs the board from the
+    // results people went out on. lms_apply_fixture_results re-reads the guard
+    // inside the transaction, so the check and the write cannot be separated —
+    // this run either finishes before a settle starts, or is correctly refused
+    // by a guard that has already seen it.
     //
-    // Manual entry always wins, so the write re-asserts both halves of what we
-    // read: still unresulted AND still scheduled. `result is null` alone is not
-    // enough — an admin who marks a game postponed leaves result null, and
-    // without the status check we would flip it back to played and hand a
-    // result to a pick the rules say should have SURVIVED.
-    const { error, count } = await supabaseServer
-      .from("fixtures")
-      .update(
-        {
-          home_score: update.home_score,
-          away_score: update.away_score,
-          status: "played",
-          result: update.result,
-        },
-        { count: "exact" }
-      )
-      .eq("id", update.fixtureId)
-      .eq("status", "scheduled")
-      .is("result", null);
+    // Per-fixture preconditions are still re-asserted in there (still
+    // scheduled, still unresulted): manual entry always wins. `result is null`
+    // alone is not enough — an admin who marks a game postponed leaves result
+    // null, and without the status check we would flip it back to played and
+    // hand a result to a pick the rules say should have SURVIVED.
+    const { data, error } = await supabaseServer.rpc(
+      "lms_apply_fixture_results",
+      {
+        p_updates: outcome.updates.map((u) => ({
+          fixture_id: u.fixtureId,
+          home_score: u.home_score,
+          away_score: u.away_score,
+          result: u.result,
+        })),
+      }
+    );
 
     if (error) {
       report.ok = false;
-      report.errors.push(`Fixture ${update.fixtureId}: ${error.message}`);
-      continue;
-    }
-    if (count === 0) {
+      report.errors.push(`Could not write results: ${error.message}`);
+    } else {
+      const applied = data as {
+        busy: boolean;
+        updated: {
+          fixture_id: number;
+          home_score: number;
+          away_score: number;
+          result: string;
+        }[];
+        changed_underneath: number;
+        round_settled: { fixture_id: number; round_number: number }[];
+      };
+
+      if (applied.busy) {
+        // A settlement is mid-flight and holds the write lock. The function
+        // gave up rather than blocking until the platform's timeout, and wrote
+        // NOTHING — so this is a clean no-op, not a partial run. Filling a
+        // result is never urgent and the feed is re-read from scratch every
+        // time, so tomorrow's run picks these up with nothing lost.
+        //
+        // 503 rather than 200: the job did not do its work and SHOULD be
+        // retried. Reporting it as a success would hide a run that filled no
+        // results, which is the one thing a monitor here is watching for.
+        report.ok = false;
+        report.skipped.settlementInProgress = true;
+        report.errors.push(
+          "Settlement is in progress — no results were written. The next scheduled run will retry."
+        );
+        return Response.json(report, { status: 503 });
+      }
+
+      for (const u of applied.updated) {
+        report.updated.push({
+          fixtureId: u.fixture_id,
+          score: `${u.home_score}-${u.away_score}`,
+          result: u.result,
+        });
+      }
       // Someone changed it underneath us — entered a result, or marked it
       // postponed. Either way theirs stands.
-      report.skipped.changedUnderneath += 1;
-      continue;
+      report.skipped.changedUnderneath += applied.changed_underneath;
+      // Rounds that were settled after step 2 read them as unsettled. Reported
+      // alongside the ones caught up front — same skip, caught later.
+      for (const s of applied.round_settled) {
+        report.skipped.roundSettled.push({
+          fixtureId: s.fixture_id,
+          round: s.round_number,
+        });
+      }
     }
-    report.updated.push({
-      fixtureId: update.fixtureId,
-      score: `${update.home_score}-${update.away_score}`,
-      result: update.result,
-    });
   }
 
   if (outcome.unmapped.length > 0 && outcome.notReported.length > 0) {

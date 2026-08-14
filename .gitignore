@@ -41,3 +41,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# scratch Postgres for the integration suite (scripts/scratch-db.sh)
+/.scratch-db

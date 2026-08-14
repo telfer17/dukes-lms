@@ -6,6 +6,7 @@
 
 import { expectedBuyInPence } from "@/lib/competition";
 import type { EntryStatus } from "@/lib/lms";
+import { normaliseUkPhone } from "@/lib/phone";
 
 export type EntryRecord = {
   id: string;
@@ -75,4 +76,95 @@ export function groupEntries(
   };
 
   return { groups, totals };
+}
+
+// ---------------------------------------------------------------------------
+// Soft duplicate detection on entry creation
+// ---------------------------------------------------------------------------
+
+export type DuplicateCandidate = {
+  /** Set when an existing person was chosen from the picker. */
+  participantId: string | null;
+  name: string;
+  phone: string | null;
+};
+
+export type ExistingEntrant = {
+  participantId: string;
+  name: string;
+  phone: string | null;
+};
+
+/**
+ * Compare two phone numbers the way a human would: the same number written two
+ * ways is the same number. Falls back to the raw text when a value will not
+ * normalise, so an oddly-formatted number still matches an identical one rather
+ * than matching nothing.
+ */
+function samePhone(a: string | null, b: string | null): boolean {
+  const left = (a ?? "").trim();
+  const right = (b ?? "").trim();
+  if (left === "" || right === "") return false;
+  return (normaliseUkPhone(left) ?? left) === (normaliseUkPhone(right) ?? right);
+}
+
+function sameName(a: string, b: string): boolean {
+  const left = a.trim();
+  const right = b.trim();
+  if (left === "" || right === "") return false;
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+/**
+ * A stable identity for the entry being created, used to tie a duplicate
+ * confirmation to the person it was actually given for.
+ *
+ * Without it, "yes, add another" is just a boolean riding along on the form: an
+ * organiser who confirms for David Smith, then edits the fields to somebody
+ * else and submits, would have that second person created with no check at all.
+ * Minting the key with the notice and re-deriving it from the submitted fields
+ * means a confirmation only counts for the candidate it was issued against —
+ * anything else falls back to asking again, which is the safe direction.
+ *
+ * Normalised the same way the matching is, so a confirmation is not lost to a
+ * changed capital letter or a re-spaced phone number. JSON rather than a
+ * delimiter, so a name containing the separator cannot forge a different key.
+ */
+export function duplicateCandidateKey(candidate: DuplicateCandidate): string {
+  const phone = (candidate.phone ?? "").trim();
+  return JSON.stringify([
+    candidate.participantId ?? "",
+    candidate.name.trim().toLowerCase(),
+    phone === "" ? "" : (normaliseUkPhone(phone) ?? phone),
+  ]);
+}
+
+/**
+ * The first entry in the ACTIVE competition that looks like the one being
+ * created: the same person, the same name (case-insensitively), or the same
+ * phone number.
+ *
+ * This is a NOTICE, never a block. Multiple entries are explicitly allowed —
+ * "David Smith 1" and "David Smith 2" are two independent runs, each paid for
+ * in full (docs/LMS-RULES.md). The only thing worth catching is the organiser
+ * adding the same person twice by accident, which one extra confirmation
+ * settles either way.
+ *
+ * Match order is deliberate: participant id first (the picker was used, so we
+ * know), then name, then phone. Only the fact of a match is used, but the
+ * matched row is returned so the message can name who.
+ */
+export function findDuplicateEntrant(
+  candidate: DuplicateCandidate,
+  existing: ExistingEntrant[]
+): ExistingEntrant | null {
+  return (
+    existing.find(
+      (e) =>
+        (candidate.participantId !== null &&
+          e.participantId === candidate.participantId) ||
+        sameName(e.name, candidate.name) ||
+        samePhone(e.phone, candidate.phone)
+    ) ?? null
+  );
 }

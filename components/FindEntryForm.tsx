@@ -1,20 +1,39 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
-type Entry = { id: string; name: string };
+type FoundEntry = {
+  entryId: string;
+  name: string;
+  status: "active" | "eliminated" | "winner";
+};
+
+type Response =
+  | { entries: FoundEntry[]; competition?: string; reason?: never }
+  | { entries: []; reason: "no_competition" | "no_entries"; competition?: never };
+
+const STATUS_LABEL: Record<FoundEntry["status"], string> = {
+  active: "still in",
+  eliminated: "out",
+  winner: "winner",
+};
 
 export default function FindEntryForm() {
   const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notFound, setNotFound] = useState(false);
-  const [entries, setEntries] = useState<Entry[]>([]);
+  const [reason, setReason] = useState<"no_competition" | "no_entries" | null>(
+    null
+  );
+  const [competition, setCompetition] = useState<string | null>(null);
+  const [entries, setEntries] = useState<FoundEntry[]>([]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setNotFound(false);
+    setReason(null);
+    setCompetition(null);
     setEntries([]);
     setSubmitting(true);
     try {
@@ -29,13 +48,14 @@ export default function FindEntryForm() {
         setSubmitting(false);
         return;
       }
-      const { entries: found } = (await res.json()) as { entries: Entry[] };
-      if (found.length === 0) {
-        setNotFound(true);
+      const data = (await res.json()) as Response;
+      if (data.entries.length === 0) {
+        setReason(data.reason ?? "no_entries");
         setSubmitting(false);
         return;
       }
-      setEntries(found);
+      setEntries(data.entries);
+      setCompetition(data.competition ?? null);
       setSubmitting(false);
     } catch {
       setError("Something went wrong — please try again.");
@@ -58,7 +78,7 @@ export default function FindEntryForm() {
           title="11-digit UK number starting with 0"
           value={phone}
           onChange={(e) =>
-            // Digits only, capped at 11 — same as the Enter form.
+            // Digits only, capped at 11 — same as the admin entry form.
             setPhone(e.target.value.replace(/\D/g, "").slice(0, 11))
           }
           className="mt-1 w-full rounded-md border border-gray-300 p-2"
@@ -77,10 +97,19 @@ export default function FindEntryForm() {
         </p>
       )}
 
-      {notFound && (
+      {/* Two different honest answers, not one vague "not found". */}
+      {reason === "no_competition" && (
         <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          No entry found with that number. Entries are added by your club
-          contact — have a word with them to get signed up.
+          There&apos;s no competition running at the moment. Your club contact
+          will know when the next one starts.
+        </p>
+      )}
+
+      {reason === "no_entries" && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          No entry found with that number in the current competition. Entries
+          are added by your club contact — have a word with them to get signed
+          up.
         </p>
       )}
 
@@ -89,13 +118,39 @@ export default function FindEntryForm() {
           <p className="text-sm font-medium">
             {entries.length === 1
               ? "Found your entry:"
-              : `You have ${entries.length} entries:`}
+              : `You have ${entries.length} entries — each one is separate:`}
           </p>
-          <ul className="mt-2 space-y-1 text-sm text-gray-700">
+          {competition && (
+            <p className="mt-1 text-xs text-gray-500">{competition}</p>
+          )}
+          <ul className="mt-3 space-y-2">
             {entries.map((entry) => (
-              <li key={entry.id}>{entry.name}</li>
+              <li key={entry.entryId}>
+                <Link
+                  href={`/pick/${entry.entryId}`}
+                  className="flex items-center justify-between gap-3 rounded-md border border-gray-200 p-3 text-sm hover:bg-gray-50"
+                >
+                  <span className="min-w-0 flex-1 truncate font-medium text-blue-600 underline">
+                    {entry.name}
+                  </span>
+                  <span
+                    className={
+                      entry.status === "eliminated"
+                        ? "text-red-600"
+                        : entry.status === "winner"
+                          ? "text-amber-700"
+                          : "text-green-700"
+                    }
+                  >
+                    {STATUS_LABEL[entry.status]}
+                  </span>
+                </Link>
+              </li>
             ))}
           </ul>
+          <p className="mt-3 text-xs text-gray-500">
+            These links are personal to your entries — don&apos;t share them.
+          </p>
         </div>
       )}
 
