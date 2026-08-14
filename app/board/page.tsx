@@ -19,6 +19,13 @@ import {
   readPublicCompetition,
   readPublicRounds,
 } from "@/lib/public-read";
+import {
+  ELIMINATED_HEADING,
+  NO_ELIMINATIONS_LINE,
+  noStandingLine,
+  splitStandings,
+  standingHeading,
+} from "@/lib/standings";
 
 export const dynamic = "force-dynamic";
 
@@ -101,16 +108,12 @@ export default async function BoardPage() {
   // business any more.
   const concluded = isConcluded(competition.status);
 
-  const active = board
-    .filter((r) => r.status === "active" || r.status === "winner")
-    .sort((a, b) => a.name.localeCompare(b.name));
-  const out = board
-    .filter((r) => r.status === "eliminated")
-    .sort(
-      (a, b) =>
-        (b.eliminated_round_number ?? 0) - (a.eliminated_round_number ?? 0) ||
-        a.name.localeCompare(b.name)
-    );
+  // The same split, the same ranking and the same words as /grid — one shared
+  // module (lib/standings.ts), so the two screens cannot describe the same two
+  // groups differently or order the eliminated two ways.
+  const { standing: active, eliminated: out } = splitStandings(
+    board.map((r) => ({ ...r, eliminatedRound: r.eliminated_round_number }))
+  );
 
   // ---- entries: private rows, read once, projected before anything ships ----
   // The pot is computed SERVER-SIDE from the amounts on these rows and only the
@@ -240,14 +243,13 @@ export default async function BoardPage() {
           // A finished competition opens on the story everyone wants: on a
           // rollover the survivors' tab is empty, so the full field — with the
           // round each of them went out in — is what comes up first.
-          activeLabel={concluded ? "Made it" : "Still in"}
+          activeLabel={standingHeading(concluded)}
+          outLabel={ELIMINATED_HEADING}
           initialTab={concluded && active.length === 0 ? "out" : "active"}
           active={
             active.length === 0 ? (
               <p className="rounded-md border border-gray-200 p-6 text-center text-gray-500">
-                {concluded
-                  ? "Nobody made it to the end — everyone went out."
-                  : "Nobody is still in."}
+                {noStandingLine(concluded)}
               </p>
             ) : (
               <ul className="divide-y divide-gray-200 rounded-md border border-gray-200">
@@ -273,7 +275,7 @@ export default async function BoardPage() {
           out={
             out.length === 0 ? (
               <p className="rounded-md border border-gray-200 p-6 text-center text-gray-500">
-                {concluded ? "Nobody went out." : "Nobody's out yet."}
+                {NO_ELIMINATIONS_LINE}
               </p>
             ) : (
               <ul className="divide-y divide-gray-200 rounded-md border border-gray-200">

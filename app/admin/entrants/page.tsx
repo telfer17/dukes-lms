@@ -56,10 +56,12 @@ const deadlineFormat = new Intl.DateTimeFormat("en-GB", {
   hour12: false,
 });
 
-const BUCKET_HEADING: Record<PickBucket, string> = {
+// Only the two working blocks get a heading in the main list. The third —
+// entries that are out — is not part of the weekly job and lives in a collapsed
+// section at the bottom of the page instead.
+const BUCKET_HEADING: Record<Exclude<PickBucket, "out">, string> = {
   to_pick: "Still to pick",
   picked: "Picked",
-  out: "Out",
 };
 
 /** Everything one row needs, once the payment side and the pick side are joined. */
@@ -295,14 +297,23 @@ export default async function EntrantsPage() {
   const activeCount = rows.filter((r) => r.status === "active").length;
   const toPick = ordered.filter((r) => r.bucket === "to_pick").length;
 
+  // The working view is STILL TO PICK and PICKED — the weekly job. Entries that
+  // are out can never be given a pick, so they are folded away below rather
+  // than padding the list an organiser scrolls through in a pub every Saturday.
+  // They are not gone: payment is still their business, which is why the fold
+  // carries the unpaid count and the totals below still count them.
+  const working = ordered.filter((r) => r.bucket !== "out");
+  const outRows = ordered.filter((r) => r.bucket === "out");
+  const outUnpaid = outRows.filter((r) => !r.paid).length;
+
   // A heading goes above the first row of each block. Derived by looking back
   // one row rather than carrying a running variable, so the list stays a pure
-  // function of `ordered`.
-  const listItems = ordered.map((row, i) => ({
+  // function of `working`.
+  const listItems = working.map((row, i) => ({
     row,
     heading:
-      roundKnown && (i === 0 || ordered[i - 1].bucket !== row.bucket)
-        ? row.bucket
+      roundKnown && (i === 0 || working[i - 1].bucket !== row.bucket)
+        ? (row.bucket as Exclude<PickBucket, "out">)
         : null,
   }));
 
@@ -372,8 +383,12 @@ export default async function EntrantsPage() {
 
       {fixturesMissing && round && (
         <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          No fixtures loaded for matchday {round.matchday} — picks can&apos;t be
-          entered until they are.
+          {/* The {" "} is load-bearing — see the note at the top of
+              app/rules/page.tsx: the compiler drops a plain space between an
+              expression and a text run containing an escaped entity, which
+              rendered "matchday 3— picks". */}
+          No fixtures loaded for matchday {round.matchday}{" "}
+          — picks can&apos;t be entered until they are.
         </p>
       )}
 
@@ -451,6 +466,66 @@ export default async function EntrantsPage() {
                 : [rowNode];
             })}
           </ul>
+
+          {working.length === 0 && (
+            <p className="mt-2 rounded-md border border-gray-200 p-6 text-center text-gray-500">
+              Every entry is out.
+            </p>
+          )}
+
+          {/* ---- Out, folded away ----
+              Closed by default: these entries cannot pick, so they are not part
+              of the weekly job. What they CAN still be is unpaid, and a debt
+              hidden in a fold is a debt forgotten — so the count rides on the
+              summary line itself, where it is visible without opening
+              anything.
+
+              `group` belongs on the DETAILS, not on the summary: the open
+              attribute lives here, so group-open: has nothing to match if the
+              group is the summary — the marker then never turns and the fold
+              looks identical open or shut. */}
+          {outRows.length > 0 && (
+            <details className="group mt-4 rounded-md border border-gray-200">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-3 text-sm font-semibold text-gray-700 [&::-webkit-details-marker]:hidden">
+                <span className="min-w-0">
+                  Out ({outRows.length})
+                  {outUnpaid > 0 && (
+                    <span className="text-amber-700">
+                      {" "}
+                      — {outUnpaid} unpaid
+                    </span>
+                  )}
+                </span>
+                <span
+                  aria-hidden
+                  className="shrink-0 text-xs font-normal text-gray-500 transition-transform group-open:rotate-90"
+                >
+                  ▶
+                </span>
+              </summary>
+              <ul className="divide-y divide-gray-200 border-t border-gray-200">
+                {outRows.map((row) => (
+                  <AdminEntryRow
+                    key={row.id}
+                    id={row.id}
+                    name={row.name}
+                    clubContact={row.club_contact ?? ""}
+                    paid={row.paid}
+                    amountPaidPence={row.amount_paid_pence}
+                    expectedPence={row.expected_pence}
+                    amountMismatch={row.amount_mismatch}
+                    isNewcomer={row.is_newcomer}
+                    status={row.status}
+                    roundKnown={roundKnown}
+                    currentPick={row.currentPick}
+                    // Never a picker: an entry that is out cannot be given a
+                    // pick, and the server action refuses one anyway.
+                    picker={null}
+                  />
+                ))}
+              </ul>
+            </details>
+          )}
         </>
       )}
 
