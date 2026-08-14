@@ -223,12 +223,22 @@ export default async function Home() {
                 </p>
               ) : (
                 <>
-                  <p className="mt-2 text-3xl font-bold tabular-nums text-blue-900">
-                    {live.alive}{" "}
-                    <span className="text-xl font-semibold">
-                      of {live.total} still standing
-                    </span>
-                  </p>
+                  {/* A competition with no entries yet is not "0 of 0 still
+                      standing" — that reads as a wipeout on the one screen
+                      people check to see whether they're still in. Same
+                      wording as /board, which the CTA sends them to. */}
+                  {live.total === 0 ? (
+                    <p className="mt-2 text-lg font-semibold text-blue-900">
+                      No entries yet.
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-3xl font-bold tabular-nums text-blue-900">
+                      {live.alive}{" "}
+                      <span className="text-xl font-semibold">
+                        of {live.total} still standing
+                      </span>
+                    </p>
+                  )}
                   {live.round && (
                     <p className="mt-3 text-sm text-blue-900">
                       <span className="font-semibold">

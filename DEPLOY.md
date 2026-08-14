@@ -51,9 +51,29 @@ verification to run afterwards.
 
 ## 3. Environment variables
 
-Set each for **Production, Preview and Development**. Names only here — the
-values are the ones in your local `.env.local`, plus the two you generated
-above. Never paste real values into the repo, this file, or a chat.
+Set each for the **Production environment only** — untick Preview and
+Development in Vercel's environment picker. Names only here; the values are the
+ones in your local `.env.local`, plus the two you generated above. Never paste
+real values into the repo, this file, or a chat.
+
+Production-only scoping means preview deployments — every branch, every pull
+request, anything a GitHub integration builds — hold no database credentials,
+no admin password and no cron secret. There is one live database behind this
+app and a preview points at exactly the same rows as production, so a preview
+with credentials is a second front door to the real competition, with the same
+`ADMIN_PASSWORD` on it.
+
+**What that costs you:** preview and development deployments will **fail to
+build**, not deploy-and-degrade. Both Supabase clients throw when a key is
+missing and `next build` imports them (verified: `Missing required env var
+NEXT_PUBLIC_SUPABASE_URL` → `Build error`). That is the intended outcome here —
+check layout and copy locally with `npm run dev`, which is faster than a
+preview deployment anyway.
+
+If you ever do want working previews, that is the moment to create a
+**separate Supabase project** with its own throwaway data and scope its
+credentials to Preview. Never by copying the production values into the Preview
+scope — that is the thing this section exists to prevent.
 
 | Variable | Value comes from |
 | --- | --- |
@@ -70,10 +90,17 @@ Optional, and **only** once a custom domain is pointed at the app:
 | --- | --- |
 | `NEXT_PUBLIC_SITE_URL` | `https://your-domain` — the absolute base for the share card. Without it the app uses Vercel's own production URL automatically, which is correct until the domain changes. |
 
-- [ ] All six required variables set.
+- [ ] All six required variables set, **Production scope only**.
 - [ ] Double-check `SUPABASE_SECRET_KEY` is the **secret** key and
       `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` is the **publishable** one. Swapping
       them would publish the secret key in the client bundle.
+
+> Deliberately *not* doing full per-environment isolation (separate Supabase
+> projects and credential sets for production, preview and development). One
+> organiser, one club competition, one database — a second project to maintain,
+> reseed and keep in step with `db/` would cost more than it protects. Scoping
+> the credentials to Production gets the property that actually matters: no
+> preview URL can touch the live competition.
 
 ## 4. Deploy
 

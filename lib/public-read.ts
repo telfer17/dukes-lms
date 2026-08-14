@@ -20,6 +20,18 @@
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import type { RoundRow } from "@/lib/lms-db";
 
+/**
+ * How long a public read may hang before it counts as failed.
+ *
+ * Without this, a Supabase that accepts the connection and then stalls holds
+ * the request open until some outer limit kills it, and the visitor watches a
+ * blank tab. Five seconds is well past a healthy read (these are small indexed
+ * queries) and well short of anyone's patience. An abort surfaces in the
+ * `error` slot like any other failure, so it lands on the same honest
+ * "can't be loaded right now" panels rather than throwing past them.
+ */
+const READ_TIMEOUT_MS = 5_000;
+
 export type PublicCompetition = {
   id: string;
   label: string;
@@ -54,6 +66,7 @@ export async function readPublicCompetition() {
     .in("status", ["active", "won"])
     .order("created_at", { ascending: false })
     .limit(1)
+    .abortSignal(AbortSignal.timeout(READ_TIMEOUT_MS))
     .returns<PublicCompetition[]>();
 
   return { data: data?.[0] ?? null, error };
@@ -64,6 +77,7 @@ export async function readPublicBoard(competitionId: string) {
     .from("standing_board")
     .select(PUBLIC_BOARD_COLUMNS)
     .eq("competition_id", competitionId)
+    .abortSignal(AbortSignal.timeout(READ_TIMEOUT_MS))
     .returns<BoardRow[]>();
 }
 
@@ -73,5 +87,6 @@ export async function readPublicRounds(competitionId: string) {
     .select("id, competition_id, round_number, matchday, deadline, status")
     .eq("competition_id", competitionId)
     .order("round_number")
+    .abortSignal(AbortSignal.timeout(READ_TIMEOUT_MS))
     .returns<RoundRow[]>();
 }
