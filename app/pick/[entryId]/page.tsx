@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import PickForm, { type PickOption } from "@/components/PickForm";
+import PickForm, { type PickFixture } from "@/components/PickForm";
 import { availableTeams } from "@/lib/lms";
 import {
   currentRound,
@@ -79,7 +79,7 @@ export default async function PickPage({
   const open = round ? isRoundOpen(round) : false;
   const canPick = entry.status === "active" && round !== null && open;
 
-  let options: PickOption[] = [];
+  let pickFixtures: PickFixture[] = [];
   let fixturesMissing = false;
   const currentPick = round
     ? (picks.find((p) => p.round_id === round.id) ?? null)
@@ -98,30 +98,21 @@ export default async function PickPage({
         availableTeams(priorHistory, teams).map((t) => t.id)
       );
 
-      options = fixtures
-        .flatMap((f) => [
-          {
-            id: f.home_team_id,
-            opponentId: f.away_team_id,
-            homeAway: "H" as const,
-            kickoff: f.kickoff,
-          },
-          {
-            id: f.away_team_id,
-            opponentId: f.home_team_id,
-            homeAway: "A" as const,
-            kickoff: f.kickoff,
-          },
-        ])
-        .map((slot) => ({
-          id: slot.id,
-          name: teamById.get(slot.id)?.name ?? `Team ${slot.id}`,
-          available: availableIds.has(slot.id),
-          opponent: teamById.get(slot.opponentId)?.name ?? "—",
-          homeAway: slot.homeAway,
-          kickoff: kickoffFormat.format(new Date(slot.kickoff)),
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name));
+      // One entry per FIXTURE, in kickoff order (getFixturesForMatchday orders
+      // by kickoff) — the matchday as it will be played. The teams were
+      // previously flattened and re-sorted alphabetically, which read as a list
+      // of 20 teams with their games as footnotes.
+      const team = (id: number) => ({
+        id,
+        name: teamById.get(id)?.name ?? `Team ${id}`,
+        available: availableIds.has(id),
+      });
+      pickFixtures = fixtures.map((f, i) => ({
+        key: `${f.matchday}-${i}`,
+        kickoff: kickoffFormat.format(new Date(f.kickoff)),
+        home: team(f.home_team_id),
+        away: team(f.away_team_id),
+      }));
     }
   }
 
@@ -210,7 +201,7 @@ export default async function PickPage({
                 <PickForm
                   entryId={entry.id}
                   roundId={round.id}
-                  options={options}
+                  fixtures={pickFixtures}
                   currentTeamId={currentPick?.team_id ?? null}
                 />
               ) : (

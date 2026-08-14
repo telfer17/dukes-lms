@@ -1,14 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { availableTeams, teamsPlayingIn } from "@/lib/lms";
+import { validatePick } from "@/lib/pick-rules";
 import {
   getEntry,
   getFixturesForMatchday,
   getPicksForEntry,
   getRounds,
   getTeams,
-  isRoundOpen,
   pickHistoryTeamIds,
 } from "@/lib/lms-db";
 import { supabaseServer } from "@/lib/supabase-server";
@@ -43,20 +42,7 @@ export async function submitPick(
 
   const rounds = await getRounds(entry.competition_id);
   const round = rounds.find((r) => r.id === roundId);
-  if (!round) return { error: "That round doesn't belong to this competition." };
-
-  // Authoritative deadline check: the DB's deadline against server time.
-  if (!isRoundOpen(round)) {
-    return { error: "That round is closed — the deadline has passed." };
-  }
-
-  const fixtures = await getFixturesForMatchday(round.matchday);
-  if (fixtures.length === 0) {
-    return { error: "No fixtures loaded for this matchday yet." };
-  }
-  if (!teamsPlayingIn(fixtures, round.matchday).has(teamId)) {
-    return { error: "That team isn't playing this round." };
-  }
+  const fixtures = round ? await getFixturesForMatchday(round.matchday) : [];
 
   // Availability from the engine, over this entry's own history — excluding any
   // pick already made for THIS round, which is being replaced.
@@ -67,9 +53,19 @@ export async function submitPick(
     roundNumberById
   );
   const teams = await getTeams();
-  if (!availableTeams(history, teams).some((t) => t.id === teamId)) {
-    return { error: "You've already used that team." };
-  }
+
+  // One shared rule set with the organiser's path (lib/pick-rules.ts). The
+  // player never gets the after-deadline override.
+  const verdict = validatePick({
+    entryStatus: entry.status,
+    round,
+    fixtures,
+    teams,
+    history,
+    teamId,
+    allowAfterDeadline: false,
+  });
+  if (!verdict.ok) return { error: verdict.error };
 
   // One pick per (entry, round) is a DB constraint — upsert on it so changing a
   // pick before the deadline replaces rather than collides.

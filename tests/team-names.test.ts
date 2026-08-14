@@ -4,7 +4,12 @@
 // feed that used them (recoverable from git history — search: results-feed).
 
 import { describe, expect, it } from "vitest";
-import { CANONICAL_TEAMS, stripClubTag } from "@/lib/team-names";
+import {
+  CANONICAL_TEAMS,
+  TEAM_DISPLAY_NAMES,
+  displayTeamName,
+  stripClubTag,
+} from "@/lib/team-names";
 
 describe("stripClubTag", () => {
   it("strips a trailing FC", () => {
@@ -61,5 +66,56 @@ describe("the openfootball source names", () => {
     ]) {
       expect(CANONICAL_TEAMS).not.toContain(stripClubTag(outsider));
     }
+  });
+});
+
+describe("display names", () => {
+  it("covers exactly the canonical 20", () => {
+    // A club renamed in one table and not the other must fail here rather than
+    // render as a blank grid cell.
+    expect(Object.keys(TEAM_DISPLAY_NAMES).sort()).toEqual(
+      [...CANONICAL_TEAMS].sort()
+    );
+  });
+
+  it("resolves every canonical name to something non-empty", () => {
+    for (const team of CANONICAL_TEAMS) {
+      const shown = displayTeamName(team);
+      expect(shown).toBeTruthy();
+      expect(shown.length).toBeLessThanOrEqual(team.length);
+    }
+  });
+
+  it("shortens the ones that do not fit", () => {
+    expect(displayTeamName("Manchester United")).toBe("Man Utd");
+    expect(displayTeamName("Manchester City")).toBe("Man City");
+    expect(displayTeamName("Brighton & Hove Albion")).toBe("Brighton");
+    expect(displayTeamName("Nottingham Forest")).toBe("Nott'm Forest");
+    expect(displayTeamName("Tottenham Hotspur")).toBe("Spurs");
+  });
+
+  it("leaves the already-short ones alone", () => {
+    for (const team of ["Arsenal", "Chelsea", "Everton", "Fulham", "Liverpool"]) {
+      expect(displayTeamName(team)).toBe(team);
+    }
+  });
+
+  it("never confuses the two Manchester clubs", () => {
+    expect(displayTeamName("Manchester City")).not.toBe(
+      displayTeamName("Manchester United")
+    );
+  });
+
+  it("returns distinct labels for every club", () => {
+    const shown = CANONICAL_TEAMS.map(displayTeamName);
+    expect(new Set(shown).size).toBe(CANONICAL_TEAMS.length);
+  });
+
+  it("passes an unknown name straight through rather than blanking it", () => {
+    expect(displayTeamName("Leicester City")).toBe("Leicester City");
+    expect(displayTeamName("  Chelsea  ")).toBe("Chelsea");
+    expect(displayTeamName("")).toBe("");
+    expect(displayTeamName(null)).toBe("");
+    expect(displayTeamName(undefined)).toBe("");
   });
 });

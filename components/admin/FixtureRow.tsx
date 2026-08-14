@@ -3,6 +3,28 @@
 import { useState, useTransition } from "react";
 import { setFixtureResult } from "@/app/admin/results/actions";
 import type { FixtureResult, FixtureStatus } from "@/lib/lms";
+import { teamColors } from "@/lib/team-colors";
+import { displayTeamName } from "@/lib/team-names";
+
+/**
+ * A club-colour chip. Deliberately a small dot rather than a coloured row: this
+ * is a working screen an organiser reads down at speed, and twenty flooded rows
+ * would fight the result buttons for attention. The dot is enough to find a
+ * fixture by eye; the colour does its real work on the picks grid.
+ */
+function TeamChip({ name }: { name: string }) {
+  const { primary, secondary } = teamColors(name);
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span
+        aria-hidden
+        className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-black/25"
+        style={{ backgroundColor: primary, boxShadow: `inset 0 0 0 1px ${secondary}33` }}
+      />
+      {displayTeamName(name)}
+    </span>
+  );
+}
 
 export default function FixtureRow({
   fixtureId,
@@ -64,17 +86,19 @@ export default function FixtureRow({
         )}
       </div>
 
-      <div className="mt-1 text-sm font-medium">
-        {home} <span className="text-gray-400">v</span> {away}
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
+        <TeamChip name={home} />
+        <span className="text-gray-400">vs</span>
+        <TeamChip name={away} />
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         {/* Result buttons double as "mark played" — LMS needs win/draw/loss only. */}
         {(
           [
-            ["home", `${home} won`],
+            ["home", `${displayTeamName(home)} won`],
             ["draw", "Draw"],
-            ["away", `${away} won`],
+            ["away", `${displayTeamName(away)} won`],
           ] as [FixtureResult, string][]
         ).map(([value, label]) => (
           <button
