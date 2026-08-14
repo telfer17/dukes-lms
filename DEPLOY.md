@@ -5,8 +5,8 @@ verification to run afterwards.
 
 > **The World Cup lesson: verify on the LIVE URL, not localhost.** Every check
 > in part 4 is done against the deployed site in a browser and a terminal.
-> Localhost passing tells you nothing about environment variables, the cron
-> registration, or the share card.
+> Localhost passing tells you nothing about environment variables, the admin
+> login, or the share card.
 
 ---
 
@@ -23,17 +23,13 @@ verification to run afterwards.
       *(Verified on a fresh database: all four apply cleanly in that order,
       `verify-fixtures` gives 9 PASS / 0 FAIL, and re-running the schema leaves
       the 380 fixtures and 20 teams untouched.)*
-- [ ] **If you already ran `db/lms-schema.sql` before this deploy, run it
-      again.** The launch review removed `entries.id` from the public
-      `standing_board` view — that uuid is the pick-link credential and must not
-      be readable with the publishable key. The file drops and recreates the
-      view, re-applies the grants, and touches no data.
-- [ ] **`CRON_SECRET` generated** and saved somewhere you can reach later:
-      ```bash
-      openssl rand -hex 32
-      ```
-- [ ] **`API_FOOTBALL_KEY` in hand** from [api-football.com](https://www.api-football.com)
-      (free tier is enough — the job makes one call per run).
+- [ ] **If you already ran the SQL before this deploy, run `db/lms-schema.sql`
+      and `db/settlement-fn.sql` again.** Two things changed since: the launch
+      review removed `entries.id` from the public `standing_board` view (that
+      uuid is the pick-link credential and must not be readable with the
+      publishable key), and auto-results was removed, so `settlement-fn.sql`
+      now drops `lms_apply_fixture_results`. Both files converge a database that
+      predates the change and touch no data.
 
 ## 2. Create the project
 
@@ -58,7 +54,7 @@ real values into the repo, this file, or a chat.
 
 Production-only scoping means preview deployments — every branch, every pull
 request, anything a GitHub integration builds — hold no database credentials,
-no admin password and no cron secret. There is one live database behind this
+no admin password. There is one live database behind this
 app and a preview points at exactly the same rows as production, so a preview
 with credentials is a second front door to the real competition, with the same
 `ADMIN_PASSWORD` on it.
@@ -81,8 +77,6 @@ scope — that is the thing this section exists to prevent.
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | `.env.local` |
 | `SUPABASE_SECRET_KEY` | `.env.local` |
 | `ADMIN_PASSWORD` | `.env.local` |
-| `CRON_SECRET` | generated in part 1 |
-| `API_FOOTBALL_KEY` | api-football.com account |
 
 Optional, and **only** once a custom domain is pointed at the app:
 
@@ -90,7 +84,7 @@ Optional, and **only** once a custom domain is pointed at the app:
 | --- | --- |
 | `NEXT_PUBLIC_SITE_URL` | `https://your-domain` — the absolute base for the share card. Without it the app uses Vercel's own production URL automatically, which is correct until the domain changes. |
 
-- [ ] All six required variables set, **Production scope only**.
+- [ ] All four required variables set, **Production scope only**.
 - [ ] Double-check `SUPABASE_SECRET_KEY` is the **secret** key and
       `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` is the **publishable** one. Swapping
       them would publish the secret key in the client bundle.
@@ -136,35 +130,6 @@ Optional, and **only** once a custom domain is pointed at the app:
       "could not read" banner — that banner means `SUPABASE_SECRET_KEY` is wrong
       or the SQL hasn't been run.
 
-**Cron route**
-
-- [ ] Rejects an unauthenticated request:
-      ```bash
-      curl -i $SITE/api/cron/results        # expect 401 {"error":"Unauthorized"}
-      ```
-- [ ] Accepts the secret in a header and reports cleanly:
-      ```bash
-      curl -H "Authorization: Bearer $CRON_SECRET" $SITE/api/cron/results
-      ```
-      Expect `"ok": true`, `unmapped: []` and `errors: []`. Before the season
-      starts `checked` will be `0` — that's correct, nothing has kicked off yet.
-      Anything in `unmapped` means a club name the feed uses doesn't match
-      `lib/team-names.ts`; anything in `errors` usually means a missing or
-      rejected `API_FOOTBALL_KEY`.
-- [ ] **Never** pass the secret as a query string. It would end up in Vercel's
-      access logs.
-
-**Cron registration**
-
-- [ ] Vercel → project → **Settings → Cron Jobs** lists `/api/cron/results`,
-      schedule `0 4 * * *`, enabled. It appears only after a production
-      deployment that includes `vercel.json`.
-- [ ] On the Hobby plan the daily run fires at an approximate time within that
-      hour. That's fine — the job only fills results and is safe to re-run.
-- [ ] The morning after the first matchday, check Vercel's cron log and
-      `/admin/results` to confirm it actually wrote results. This is the one
-      check that can't be done in advance.
-
 **Share card**
 
 - [ ] Send `$SITE` to yourself on WhatsApp and confirm the card renders (crest,
@@ -190,6 +155,4 @@ Optional, and **only** once a custom domain is pointed at the app:
 | Build fails on `Missing NEXT_PUBLIC_SUPABASE_URL...` | Env vars weren't set before the first build. Set them, redeploy |
 | Screens render but every list is empty | The SQL in `db/` hasn't been run, or was run against the wrong project |
 | Admin shows "could not read" | `SUPABASE_SECRET_KEY` wrong, or `db/settlement-fn.sql` not run |
-| Cron returns 401 with the right secret | `CRON_SECRET` differs between your shell and Vercel; check for a trailing newline |
-| Cron returns `ok: true` but never writes | Wrong `SEASON` in `app/api/cron/results/route.ts`, or a bad `API_FOOTBALL_KEY` |
 | Share card blank on WhatsApp | Cached. Re-share after redeploying, or from a slightly different URL |
