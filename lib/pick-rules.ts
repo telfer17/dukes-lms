@@ -2,17 +2,24 @@
 // state, returns a verdict — so both callers share one implementation and it
 // can be unit-tested without a database.
 //
-// TWO CALLERS, ONE RULE SET:
-//   app/pick/[entryId]/actions.ts   the player, before the deadline
-//   app/admin/picks/actions.ts      the organiser, entering a pick taken by
-//                                   phone or text on someone's behalf
+// ONE CALLER TODAY, ONE RULE SET:
+//   app/admin/entrants/actions.ts   the organiser, entering the picks that
+//                                   reach them through club contacts
 //
-// The only thing the organiser gets is `allowAfterDeadline`. Everything else —
-// entry still alive, round belongs to this competition, team playing that
-// matchday, team not already used by THAT entry since its last reset — is
-// identical for both, because they are competition rules rather than UI
-// niceties. An organiser who could quietly hand someone a team they had
-// already used would be changing the result of the competition, not helping.
+// There were two. The player's own /pick/[entryId] door was removed when picks
+// became organiser-entered only — recoverable from git history if that is ever
+// reversed. `allowAfterDeadline` survives that removal deliberately: it is the
+// shape of the rule, not a feature toggle. Passing `false` is what a
+// before-the-deadline door means, the tests pin both sides of it, and the
+// difference between the two answers is the whole reason this file is a shared
+// validator rather than an inline check. The only live caller passes `true`.
+//
+// The override is ALL the organiser gets. Everything else — entry still alive,
+// round belongs to this competition, team playing that matchday, team not
+// already used by THAT entry since its last reset — applies identically either
+// way, because they are competition rules rather than UI niceties. An organiser
+// who could quietly hand someone a team they had already used would be changing
+// the result of the competition, not helping.
 //
 // What the flag does NOT allow, ever, is writing into a SETTLED round: those
 // eliminations have already been computed and announced, and a late pick would
@@ -47,7 +54,12 @@ export type PickAttempt = {
    */
   history: TeamId[];
   teamId: number;
-  /** The organiser override: write after the deadline, before settlement. */
+  /**
+   * The organiser override: write after the deadline, before settlement. Every
+   * live caller passes `true` — the only door left is the organiser's. `false`
+   * is kept because it is what the rule MEANS, and tests/pick-rules.test.ts
+   * runs every rejection both ways to prove the override relaxes nothing else.
+   */
   allowAfterDeadline: boolean;
   now?: Date;
 };

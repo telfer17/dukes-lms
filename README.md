@@ -5,10 +5,17 @@ Premier League season. Each round every player picks one team to win: win and
 they're through, draw or lose and they're out, and a team can only be picked
 once. Last one standing takes the pot.
 
-The competition itself is **organiser-mediated**. There is no public sign-up:
-an admin adds entrants against a competition and hands out a per-entry pick
-link. Players use the site to make picks and to watch the board; money, chasing
-and judgement calls stay with the organiser.
+The competition itself is **organiser-mediated**, end to end. There is no
+public sign-up and **no self-serve pick entry**: an admin adds entrants against
+a competition, and every pick reaches the organiser through a club contact and
+is typed into `/admin/entrants`. Players use the site to watch the board and
+the picks grid; entries, picks, money, chasing and judgement calls all stay
+with the organiser.
+
+> A player-facing pick page (`/pick/[entryId]`) and a link-recovery screen
+> (`/find`) existed until the pick process was streamlined to one door. Both
+> were deleted rather than left dormant — recoverable from git history if that
+> decision is ever reversed.
 
 **The rules are the spec.** [`docs/LMS-RULES.md`](docs/LMS-RULES.md) is the
 single source of truth, `lib/lms.ts` is the pure engine that implements it, and
@@ -20,9 +27,8 @@ doc first, and all three must agree.
 | `/` | Homepage — how it works, entry price, live round and alive count |
 | `/board` | Who's still standing, this round's picks once locked, the pot |
 | `/rules` | The full ruleset in plain English |
-| `/pick/[entryId]` | A player's private pick page. The uuid **is** the credential |
-| `/find` | Lost your pick link? Look it up by phone number |
-| `/admin` | Competition, entrants and payments, results and settling |
+| `/grid` | Every entry's picks round by round |
+| `/admin` | Competition, entrants (payment **and** picks), results and settling |
 
 ## Stack
 
@@ -37,7 +43,8 @@ Two Supabase clients, deliberately kept apart:
 
 - `lib/supabase-browser.ts` — publishable (anon) key, public reads only. The
   `standing_board` view exposes name and status: no phone, no payment, and no
-  `entries.id` (that uuid is the pick link — see `lib/public-read.ts`). As
+  `entries.id` (that uuid identifies an entry to every write path — see
+  `lib/public-read.ts`). As
   built, only server components use this client, so the key isn't in the client
   bundle today — but it is `NEXT_PUBLIC_`, one client-component import away from
   being public, so the grants have to hold on their own.

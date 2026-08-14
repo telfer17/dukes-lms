@@ -27,7 +27,7 @@ export const metadata = {
  * handed to the client component carry a name, a status, an elimination round,
  * and per-round { team, outcome, auto } — and nothing else.
  *
- * Deliberately absent: entries.id (the credential for /pick/[entryId]),
+ * Deliberately absent: entries.id (the handle every write path takes),
  * participant ids, phone numbers, payment amounts, team ids, round ids. They
  * are never put on the props, so they cannot appear in the RSC payload — the
  * lesson from the board's entry-id leak, where a value used only as a React key
@@ -35,7 +35,7 @@ export const metadata = {
  *
  * Picks themselves are public the moment they are made: there is no
  * secrecy rule in docs/LMS-RULES.md, and this grid is the competition's
- * scoreboard. What stays private is the pick LINK, not the pick.
+ * scoreboard. What stays private is who owes what and how to reach them.
  */
 
 export default async function GridPage() {

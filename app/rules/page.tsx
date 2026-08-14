@@ -143,11 +143,9 @@ export default function RulesPage() {
           like. After it, nothing can be changed.
         </p>
         <p>
-          Your pick link is personal to your entry. Lost it?{" "}
-          <Link href="/find" className="text-blue-600 hover:underline">
-            Get it back here
-          </Link>
-          .
+          Picks go through the organiser. Get yours to your club contact before
+          the deadline — by text, in person, however suits — and they enter it
+          for you. There is no pick page to log into and nothing to lose.
         </p>
       </Section>
 

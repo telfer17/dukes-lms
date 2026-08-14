@@ -115,10 +115,11 @@ Optional, and **only** once a custom domain is pointed at the app:
 - [ ] `$SITE/board` — renders. With no competition yet it says so honestly
       rather than erroring.
 - [ ] `$SITE/rules` — renders in full, all nine sections, buy-in table included.
-- [ ] `$SITE/find` — the form renders, and a phone number with no entry gets a
-      plain answer rather than an error: "no competition running at the moment"
-      before you've created one, "no entry found with that number" after.
-- [ ] Nav links (The board, Rules) work, and the Footy Fees logo shows at
+- [ ] `$SITE/grid` — renders. Picks are entered in admin, so this is the only
+      pick surface players have.
+- [ ] `$SITE/pick/anything` and `$SITE/find` both 404. Players have no
+      pick-entry page: every pick goes through a club contact to the organiser.
+- [ ] Nav links (The board, Picks, Rules) work, and the Footy Fees logo shows at
       desktop width.
 - [ ] On a phone, not just a desktop window narrowed down.
 
@@ -144,7 +145,8 @@ Optional, and **only** once a custom domain is pointed at the app:
 - [ ] Check round 1's deadline reads **Friday 21 August, 20:00** (the first
       kick-off, Arsenal v Coventry City). If a broadcaster has moved a game
       earlier, fix the round before anyone can pick.
-- [ ] Add the entrants and hand out their pick links.
+- [ ] Add the entrants in `/admin/entrants`, and tell the club contacts that
+      picks come to them and get entered on that same screen.
 - [ ] Send the announcement — [`docs/LAUNCH-MESSAGE.md`](docs/LAUNCH-MESSAGE.md),
       with `<SITE URL>` and `<ORGANISER>` filled in.
 

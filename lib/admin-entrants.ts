@@ -79,6 +79,47 @@ export function groupEntries(
 }
 
 // ---------------------------------------------------------------------------
+// Ordering the merged entrants + picks list
+// ---------------------------------------------------------------------------
+
+/**
+ * Which block of the list an entry belongs in.
+ *
+ * `to_pick` is the organiser's actual work for the week, so it sorts FIRST —
+ * on a phone, in a pub, the people still to chase should not be somewhere in
+ * the middle of fifty rows. `out` is eliminated and winner entries: they still
+ * appear (payment is still their business) but they can never be given a pick.
+ */
+export type PickBucket = "to_pick" | "picked" | "out";
+
+const BUCKET_ORDER: Record<PickBucket, number> = {
+  to_pick: 0,
+  picked: 1,
+  out: 2,
+};
+
+export function pickBucket(status: EntryStatus, hasPick: boolean): PickBucket {
+  if (status !== "active") return "out";
+  return hasPick ? "picked" : "to_pick";
+}
+
+/**
+ * Work first, then alphabetical within each block. Pure and total — the input
+ * is not mutated, and the comparison never depends on the incoming order.
+ */
+export function orderForPicking<
+  T extends { name: string; status: EntryStatus; hasPick: boolean },
+>(rows: T[]): (T & { bucket: PickBucket })[] {
+  return rows
+    .map((row) => ({ ...row, bucket: pickBucket(row.status, row.hasPick) }))
+    .sort(
+      (a, b) =>
+        BUCKET_ORDER[a.bucket] - BUCKET_ORDER[b.bucket] ||
+        a.name.localeCompare(b.name, "en")
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Soft duplicate detection on entry creation
 // ---------------------------------------------------------------------------
 
