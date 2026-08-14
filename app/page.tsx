@@ -1,7 +1,9 @@
 import Image from "next/image";
 import Link from "next/link";
+import ConcludedPanel from "@/components/ConcludedPanel";
 import DeadlineCountdown from "@/components/DeadlineCountdown";
 import fixtureData from "@/data/fixtures-2026-27.json";
+import { readConcludedSummary, type ConcludedSummary } from "@/lib/concluded";
 import {
   BASE_ENTRY_PENCE,
   clubPence,
@@ -10,6 +12,7 @@ import {
 } from "@/lib/competition";
 import { currentRound, isRoundOpen } from "@/lib/lms-db";
 import {
+  isConcluded,
   readPublicBoard,
   readPublicCompetition,
   readPublicRounds,
@@ -59,13 +62,13 @@ type LiveState =
   | { kind: "preseason" }
   | { kind: "between" }
   | { kind: "unavailable" }
+  | { kind: "concluded"; summary: ConcludedSummary }
   | {
       kind: "running";
       label: string;
       alive: number;
       total: number;
       round: { number: number; matchday: number; deadline: string; open: boolean } | null;
-      winner: string | null;
     };
 
 /**
@@ -75,8 +78,12 @@ type LiveState =
  * AFTER it starts it means something else entirely — the competition rolled
  * over and the next one isn't up yet, or the season is done — and telling a
  * player in December that the season kicks off on 21 August is a straight lie
- * that also buries the real answer (ask the organiser). readPublicCompetition
- * only returns active/won, so a rolled_over competition lands here too.
+ * that also buries the real answer (ask the organiser).
+ *
+ * This is now the narrow case it always should have been: readPublicCompetition
+ * falls back to the last concluded competition, so a finished one lands on the
+ * concluded panel — winner, pot, final table — instead of here. Nothing reaches
+ * this function unless the database holds no competition at all.
  */
 function noCompetitionState(): LiveState {
   return Date.now() < Date.parse(seasonKickoff)
@@ -92,6 +99,12 @@ async function readLiveState(): Promise<LiveState> {
   }
   if (!competition) return noCompetitionState();
 
+  // Over, but not gone: the winner (or the rollover) and the pot come off the
+  // same rows the board and the grid are still rendering from.
+  if (isConcluded(competition.status)) {
+    return { kind: "concluded", summary: await readConcludedSummary(competition) };
+  }
+
   const [boardRes, roundsRes] = await Promise.all([
     readPublicBoard(competition.id),
     readPublicRounds(competition.id),
@@ -106,8 +119,9 @@ async function readLiveState(): Promise<LiveState> {
 
   const board: BoardRow[] = boardRes.data ?? [];
   const round = currentRound(roundsRes.data ?? []);
-  const winner = board.find((r) => r.status === "winner") ?? null;
 
+  // No winner branch here any more: a competition with a winner is 'won', and
+  // 'won' is the concluded state above. This one is genuinely still running.
   return {
     kind: "running",
     label: competition.label,
@@ -121,7 +135,6 @@ async function readLiveState(): Promise<LiveState> {
           open: isRoundOpen(round),
         }
       : null,
-    winner: winner?.name ?? null,
   };
 }
 
@@ -211,82 +224,92 @@ export default async function Home() {
             </div>
           )}
 
+          {live.kind === "concluded" && (
+            <>
+              <ConcludedPanel summary={live.summary} />
+              <p className="mt-3 text-sm text-gray-600">
+                {live.summary.label} — final standings and every pick of the
+                season are still up.
+              </p>
+            </>
+          )}
+
           {live.kind === "running" && (
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-5">
               <p className="text-xs font-bold uppercase tracking-wide text-blue-700">
                 {live.label}
               </p>
 
-              {live.winner ? (
-                <p className="mt-2 text-2xl font-bold text-blue-900">
-                  {live.winner} is the Last Man Standing
+              {/* A competition with no entries yet is not "0 of 0 still
+                  standing" — that reads as a wipeout on the one screen people
+                  check to see whether they're still in. Same wording as
+                  /board, which the CTA sends them to. */}
+              {live.total === 0 ? (
+                <p className="mt-2 text-lg font-semibold text-blue-900">
+                  No entries yet.
                 </p>
               ) : (
-                <>
-                  {/* A competition with no entries yet is not "0 of 0 still
-                      standing" — that reads as a wipeout on the one screen
-                      people check to see whether they're still in. Same
-                      wording as /board, which the CTA sends them to. */}
-                  {live.total === 0 ? (
-                    <p className="mt-2 text-lg font-semibold text-blue-900">
-                      No entries yet.
-                    </p>
+                <p className="mt-2 text-3xl font-bold tabular-nums text-blue-900">
+                  {live.alive}{" "}
+                  <span className="text-xl font-semibold">
+                    of {live.total} still standing
+                  </span>
+                </p>
+              )}
+              {live.round && (
+                <p className="mt-3 text-sm text-blue-900">
+                  <span className="font-semibold">
+                    Round {live.round.number}
+                  </span>{" "}
+                  <span className="text-blue-700">
+                    (matchday {live.round.matchday})
+                  </span>
+                  <br />
+                  {live.round.open ? (
+                    <>
+                      Picks lock in{" "}
+                      <DeadlineCountdown deadline={live.round.deadline} /> —{" "}
+                      {deadlineFormat.format(new Date(live.round.deadline))}
+                    </>
                   ) : (
-                    <p className="mt-2 text-3xl font-bold tabular-nums text-blue-900">
-                      {live.alive}{" "}
-                      <span className="text-xl font-semibold">
-                        of {live.total} still standing
-                      </span>
-                    </p>
+                    <>
+                      Locked —{" "}
+                      {deadlineFormat.format(new Date(live.round.deadline))}
+                    </>
                   )}
-                  {live.round && (
-                    <p className="mt-3 text-sm text-blue-900">
-                      <span className="font-semibold">
-                        Round {live.round.number}
-                      </span>{" "}
-                      <span className="text-blue-700">
-                        (matchday {live.round.matchday})
-                      </span>
-                      <br />
-                      {live.round.open ? (
-                        <>
-                          Picks lock in{" "}
-                          <DeadlineCountdown deadline={live.round.deadline} /> —{" "}
-                          {deadlineFormat.format(new Date(live.round.deadline))}
-                        </>
-                      ) : (
-                        <>
-                          Locked —{" "}
-                          {deadlineFormat.format(new Date(live.round.deadline))}
-                        </>
-                      )}
-                    </p>
-                  )}
-                </>
+                </p>
               )}
             </div>
           )}
         </div>
 
-        {/* ---- CTAs ---- */}
+        {/* ---- CTAs ----
+            Past tense once the competition is over: "see who's still in" points
+            at a board where nobody is, and "this round's picks" at a round that
+            will never be played. Same two links, honest labels. */}
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <Link
             href="/board"
             className="rounded-md bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-700"
           >
-            See who&apos;s still in
+            {live.kind === "concluded"
+              ? "See the final standings"
+              : "See who's still in"}
           </Link>
           <Link
             href="/grid"
             className="rounded-md border-2 border-blue-600 px-6 py-3 font-semibold text-blue-600 hover:bg-blue-50"
           >
-            This round&apos;s picks
+            {live.kind === "concluded"
+              ? "The season's picks"
+              : "This round's picks"}
           </Link>
         </div>
 
         <p className="mx-auto mt-6 max-w-lg text-sm text-gray-600">
-          Picks go through your club contact — get yours to them before the
-          deadline and they&apos;ll put it in for you.
+          {live.kind === "concluded"
+            ? "Nothing to pick right now. When the next competition opens, entries and picks go through your club contact as usual."
+            : "Picks go through your club contact — get yours to them before the deadline and they'll put it in for you."}
         </p>
       </section>
 
