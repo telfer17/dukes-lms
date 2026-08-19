@@ -25,7 +25,7 @@ import { displayTeamName } from "@/lib/team-names";
 // Everything here is public information: names, and which team each entry
 // picked. No entry ids, no phone numbers, no payment — the server sends the
 // shape below and nothing else, so there is nothing private to leak into the
-// payload. See app/grid/page.tsx.
+// payload. See app/leaderboard/page.tsx.
 //
 // No "use client": with the toggle gone there is no state left, so this is a
 // server component and none of it ships as JavaScript.

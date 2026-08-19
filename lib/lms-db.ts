@@ -47,6 +47,18 @@ export type EntryRow = {
   joined_at: string;
 };
 
+/** One recorded buy-back. See db/buyback.sql. */
+export type BuybackRow = {
+  id: string;
+  competition_id: string;
+  entry_id: string;
+  eliminated_round_id: string;
+  round_id: string;
+  paid: boolean;
+  amount_paid_pence: number;
+  created_at: string;
+};
+
 export type PickRow = {
   id: string;
   competition_id: string;
@@ -66,6 +78,8 @@ const ROUND_COLS =
   "id, competition_id, round_number, matchday, deadline, status";
 const ENTRY_COLS =
   "id, competition_id, participant_id, paid, amount_paid_pence, is_newcomer, status, eliminated_round_id, joined_at";
+const BUYBACK_COLS =
+  "id, competition_id, entry_id, eliminated_round_id, round_id, paid, amount_paid_pence, created_at";
 const PICK_COLS =
   "id, competition_id, entry_id, round_id, team_id, auto_assigned, outcome";
 const FIXTURE_COLS =
@@ -231,6 +245,37 @@ export async function getPicksForCompetition(
     .returns<PickRow[]>();
   if (error) fail("picks lookup failed", error.message);
   return data ?? [];
+}
+
+/**
+ * Every buy-back recorded in this competition.
+ *
+ * Read wherever the pot is totted up as well as wherever eligibility is
+ * decided: a buy-back is another £10 through the same 50/50 split, so a screen
+ * that adds up entries alone now understates both the pot and the club's half.
+ */
+export async function getBuybacks(
+  competitionId: string
+): Promise<BuybackRow[]> {
+  const { data, error } = await supabaseServer
+    .from("buybacks")
+    .select(BUYBACK_COLS)
+    .eq("competition_id", competitionId)
+    .returns<BuybackRow[]>();
+  if (error) fail("buybacks lookup failed", error.message);
+  return data ?? [];
+}
+
+/**
+ * The highest round number already SETTLED in this competition, or 0 if none
+ * has been. The reference point for "has this entry played since it bought
+ * back?" — see resolveCompetitionState.
+ */
+export function settledRoundNumber(rounds: RoundRow[]): number {
+  const settled = rounds.filter((r) => r.status === "settled");
+  return settled.length === 0
+    ? 0
+    : Math.max(...settled.map((r) => r.round_number));
 }
 
 export async function getPicksForRound(roundId: string): Promise<PickRow[]> {

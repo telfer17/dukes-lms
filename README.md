@@ -22,13 +22,15 @@ single source of truth, `lib/lms.ts` is the pure engine that implements it, and
 `/rules` is the player-facing retelling. If a rule changes it changes in the
 doc first, and all three must agree.
 
-| Screen   | What it is                                                          |
-| -------- | ------------------------------------------------------------------- |
-| `/`      | Homepage — how it works, entry price, live round and alive count    |
-| `/board` | Who's still standing, this round's picks once locked, the pot       |
-| `/rules` | The full ruleset in plain English                                   |
-| `/grid`  | Every entry's picks round by round                                  |
-| `/admin` | Competition, entrants (payment **and** picks), results and settling |
+| Screen         | What it is                                                          |
+| -------------- | ------------------------------------------------------------------- |
+| `/`            | Homepage — how it works, entry price, live round and alive count    |
+| `/leaderboard` | Who's still standing, the pot, the deadline, and every pick by week |
+| `/rules`       | The full ruleset in plain English                                   |
+| `/admin`       | Competition, entrants (payment **and** picks), results and settling |
+
+`/board` and `/grid` were merged into `/leaderboard`; both still 307-redirect
+there, because those links are in the WhatsApp group.
 
 ## Stack
 

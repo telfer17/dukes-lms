@@ -1,5 +1,6 @@
 import Link from "next/link";
 import AdminEntryRow, {
+  type BuybackControl,
   type CurrentPick,
   type PickControl,
 } from "@/components/admin/AdminEntryRow";
@@ -10,6 +11,7 @@ import {
   type EntryRecord,
   type PickBucket,
 } from "@/lib/admin-entrants";
+import { buybackOffers } from "@/lib/buyback";
 import {
   BASE_ENTRY_PENCE,
   clubPence,
@@ -21,6 +23,7 @@ import {
 import {
   currentRound,
   getActiveCompetition,
+  getBuybacks,
   getEntries,
   getFixturesForMatchday,
   getPicksForCompetition,
@@ -29,6 +32,7 @@ import {
   getTeams,
   isRoundOpen,
   pickHistoryTeamIds,
+  type BuybackRow,
   type CompetitionRow,
   type EntryWithParticipant,
   type RoundRow,
@@ -71,6 +75,7 @@ type Row = EntryRecord & {
   hasPick: boolean;
   currentPick: CurrentPick | null;
   picker: PickControl | null;
+  buyback: BuybackControl | null;
 };
 
 function Shell({
@@ -100,11 +105,18 @@ function Shell({
 export default async function EntrantsPage() {
   let competition: CompetitionRow | null = null;
   let entries: EntryWithParticipant[] = [];
+  let buybacks: BuybackRow[] = [];
   let loadError: string | null = null;
 
   try {
     competition = await getActiveCompetition();
-    if (competition) entries = await getEntries(competition.id);
+    if (competition) {
+      entries = await getEntries(competition.id);
+      // Read with the entries, not with the picks: buy-backs are MONEY, and the
+      // totals below are wrong without them. A failure here has to take the
+      // same route as a failed entries read — hidden totals, not silent ones.
+      buybacks = await getBuybacks(competition.id);
+    }
   } catch (e) {
     console.error("entrants load failed:", e);
     loadError = "Could not read entrants.";
@@ -166,10 +178,31 @@ export default async function EntrantsPage() {
     string,
     { currentPick: CurrentPick | null; picker: PickControl | null }
   >();
+  // Entry id → the round it may buy back into. Empty unless somebody is
+  // eligible right now, which is the common case.
+  const buybackByEntry = new Map<string, BuybackControl>();
 
   try {
     const rounds = await getRounds(competition.id);
     round = currentRound(rounds);
+
+    // Buy-back offers are a property of the ROUNDS and the eliminations, not of
+    // the current round's picks — an entry knocked out in round 1 has a live
+    // offer whether or not fixtures for the current matchday are loaded. Worked
+    // out here because this is where the rounds are read; the rules themselves
+    // come from lib/lms.ts via buybackOffers, and the server action asks the
+    // very same question again before it writes anything.
+    for (const [entryId, offer] of buybackOffers({
+      entries,
+      rounds,
+      buybacks,
+    })) {
+      if (!offer.verdict.eligible) continue;
+      buybackByEntry.set(entryId, {
+        roundNumber: offer.verdict.for_round_number,
+        priceLabel: formatPence(BASE_ENTRY_PENCE),
+      });
+    }
 
     if (round) {
       const [allPicks, roundPicks, teams, fixtures] = await Promise.all([
@@ -244,6 +277,9 @@ export default async function EntrantsPage() {
     round = null;
     open = false;
     deadlinePassed = false;
+    // The rounds read is what failed, and the offers were derived from it.
+    // Better no button than one built on state we could not read.
+    buybackByEntry.clear();
   }
 
   const roundKnown = round !== null && pickError === null;
@@ -261,7 +297,10 @@ export default async function EntrantsPage() {
   }));
 
   const { groups, totals } = groupEntries(records, competition.rollover_count);
-  const money = entries.map((e) => ({
+  // Every payment, not every entry: a buy-back is another £10 through the same
+  // 50/50 split, so leaving them out understates the pot and the club's half by
+  // £5 each. potPence/clubPence take payments, so the two lists simply join.
+  const money = [...entries, ...buybacks].map((e) => ({
     paid: e.paid,
     amount_paid_pence: e.amount_paid_pence,
   }));
@@ -290,6 +329,7 @@ export default async function EntrantsPage() {
         hasPick: roundKnown && (pick?.currentPick ?? null) !== null,
         currentPick: roundKnown ? (pick?.currentPick ?? null) : null,
         picker: roundKnown ? (pick?.picker ?? null) : null,
+        buyback: buybackByEntry.get(entry.id) ?? null,
       };
     });
 
@@ -305,6 +345,11 @@ export default async function EntrantsPage() {
   const working = ordered.filter((r) => r.bucket !== "out");
   const outRows = ordered.filter((r) => r.bucket === "out");
   const outUnpaid = outRows.filter((r) => !r.paid).length;
+  // Buy-back offers expire at the next deadline, and every one of them is
+  // inside a fold that is shut by default. The count rides on the summary line
+  // for the same reason the unpaid count does: an offer nobody opens the fold
+  // to see is an offer that quietly lapses.
+  const outBuyable = outRows.filter((r) => r.buyback !== null).length;
 
   // A heading goes above the first row of each block. Derived by looking back
   // one row rather than carrying a running variable, so the list stays a pure
@@ -495,6 +540,12 @@ export default async function EntrantsPage() {
                       — {outUnpaid} unpaid
                     </span>
                   )}
+                  {outBuyable > 0 && (
+                    <span className="text-amber-700">
+                      {" "}
+                      — {outBuyable} can buy back
+                    </span>
+                  )}
                 </span>
                 <span
                   aria-hidden
@@ -519,8 +570,10 @@ export default async function EntrantsPage() {
                     roundKnown={roundKnown}
                     currentPick={row.currentPick}
                     // Never a picker: an entry that is out cannot be given a
-                    // pick, and the server action refuses one anyway.
+                    // pick, and the server action refuses one anyway. Buying
+                    // back is the one thing an out entry CAN still do.
                     picker={null}
+                    buyback={row.buyback}
                   />
                 ))}
               </ul>

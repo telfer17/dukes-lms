@@ -255,7 +255,7 @@ export default async function Home() {
               {/* A competition with no entries yet is not "0 of 0 still
                   standing" — that reads as a wipeout on the one screen people
                   check to see whether they're still in. Same wording as
-                  /board, which the CTA sends them to. */}
+                  /leaderboard, which the CTA sends them to. */}
               {live.total === 0 ? (
                 <p className="mt-2 text-lg font-semibold text-blue-900">
                   No entries yet.
@@ -295,26 +295,18 @@ export default async function Home() {
           )}
         </div>
 
-        {/* ---- CTAs ----
-            Past tense once the competition is over: "see who's still in" points
-            at a board where nobody is, and "this round's picks" at a round that
-            will never be played. Same two links, honest labels. */}
+        {/* ---- CTA ----
+            One button, because /board and /grid are now one screen. Past tense
+            once the competition is over: "see the leaderboard" still points at
+            something true, but "final standings" says what it is. */}
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <Link
-            href="/board"
+            href="/leaderboard"
             className="rounded-md bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-700"
           >
             {live.kind === "concluded"
               ? "See the final standings"
-              : "See who's still in"}
-          </Link>
-          <Link
-            href="/grid"
-            className="rounded-md border-2 border-blue-600 px-6 py-3 font-semibold text-blue-600 hover:bg-blue-50"
-          >
-            {live.kind === "concluded"
-              ? "The season's picks"
-              : "This round's picks"}
+              : "See the leaderboard"}
           </Link>
         </div>
 

@@ -1,6 +1,6 @@
 import "server-only";
 import { formatPence, potPence } from "@/lib/competition";
-import { getEntries, getParticipantNames } from "@/lib/lms-db";
+import { getBuybacks, getEntries, getParticipantNames } from "@/lib/lms-db";
 import type { PublicCompetition } from "@/lib/public-read";
 
 // What a finished competition looks like on the public screens.
@@ -48,16 +48,20 @@ type EntrySummary = {
   status: string;
 };
 
+/** A buy-back contributes to the pot exactly as an entry does: £5 of its £10. */
+type PaymentSummary = { paid: boolean; amount_paid_pence: number };
+
 /**
  * Assemble the concluded view for a competition that is over.
  *
- * `entries` is a courtesy for callers that have already read them (/board and
- * /grid both do): pass them in and this makes one lookup instead of two. Pass
- * nothing and it reads them itself.
+ * `entries` is a courtesy for callers that have already read them
+ * (/leaderboard does): pass them in and this makes one lookup instead of two.
+ * Pass nothing and it reads them itself.
  */
 export async function readConcludedSummary(
   competition: PublicCompetition,
-  entries?: EntrySummary[]
+  entries?: EntrySummary[],
+  buybacks?: PaymentSummary[]
 ): Promise<ConcludedSummary> {
   const status = competition.status as ConcludedStatus;
 
@@ -71,8 +75,25 @@ export async function readConcludedSummary(
     }
   }
 
+  // Buy-backs are money too — another £10 each, split 50/50 into this same pot.
+  // A summary that added up entries alone would under-report the pot by £5 per
+  // buy-back, on the one screen where the number is the whole point.
+  let paidBuybacks = buybacks ?? null;
+  if (!paidBuybacks) {
+    try {
+      paidBuybacks = await getBuybacks(competition.id);
+    } catch (e) {
+      console.error("concluded summary: buy-backs read failed:", e);
+    }
+  }
+
   const potLabel = known
-    ? formatPence(potPence(competition.pot_carried_in_pence, known))
+    ? formatPence(
+        potPence(competition.pot_carried_in_pence, [
+          ...known,
+          ...(paidBuybacks ?? []),
+        ])
+      )
     : null;
 
   let winnerName: string | null = null;

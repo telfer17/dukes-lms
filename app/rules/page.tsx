@@ -29,7 +29,7 @@ import {
 export const metadata = {
   title: "Rules · Dukes — Last Man Standing",
   description:
-    "The full Last Man Standing ruleset: picks, deadlines, missed picks, postponed games, multiple entries, the pot and rollovers.",
+    "The full Last Man Standing ruleset: picks, deadlines, missed picks, postponed games, buying back in, multiple entries, the pot and rollovers.",
 };
 
 const ENTRY_LABEL = formatPence(BASE_ENTRY_PENCE);
@@ -75,6 +75,7 @@ const contents = [
   { id: "picking", label: "Picking a team" },
   { id: "missed", label: "If you miss the deadline" },
   { id: "called-off", label: "Postponed or abandoned games" },
+  { id: "buy-back", label: "Buying back in" },
   { id: "multiple", label: "More than one entry" },
   { id: "money", label: "The entry fee and the pot" },
   { id: "ending", label: "How it ends" },
@@ -211,6 +212,47 @@ export default function RulesPage() {
         </p>
       </Section>
 
+      <Section id="buy-back" title="Buying back in">
+        <p>
+          Go out <strong>early</strong> and you get one chance to pay your way
+          back in. If your entry is knocked out in{" "}
+          <strong>round 1, 2 or 3</strong>, you can buy it back into the same
+          competition for another <strong>{ENTRY_LABEL}</strong>.
+        </p>
+        <p>
+          It is a <strong>one-off, for the very next round only</strong>. Out in
+          round 2 means one chance, for round 3 — and the organiser has to have
+          the money and have recorded it{" "}
+          <strong>before that round&apos;s deadline</strong>. Miss that window
+          and your entry is out for good: you can&apos;t sit a round out and
+          rejoin later, and you can&apos;t buy back at all once you have been
+          knocked out in round 4 or later.
+        </p>
+        <p>
+          The {ENTRY_LABEL} splits 50/50 like any other payment —{" "}
+          {BASE_SPLIT.pot} into the pot, {BASE_SPLIT.club} to the club — and a
+          bought-back entry that goes on to win takes the pot like anybody else.
+        </p>
+        <p>
+          <strong>Your used teams come back with you.</strong> Buying back
+          restores your life, not your list: the team that put you out{" "}
+          — and every team you had used before that —{" "}
+          stays unavailable for the rest of the competition. You pick up exactly
+          where you left off, and from then on you are an ordinary entry again:
+          same deadline, same no-repeat rule, and the same auto-assigned team if
+          you then miss the deadline.
+        </p>
+        <p>
+          If you hold more than one entry, each eliminated entry has its own
+          separate offer at {ENTRY_LABEL} apiece. Buying one back does nothing
+          to the others.
+        </p>
+        <p>
+          To take it up, speak to your club contact — the same way you enter and
+          the same way you pick.
+        </p>
+      </Section>
+
       <Section id="multiple" title="More than one entry">
         <p>
           You can take as many entries as you like, as long as you pay a full
@@ -231,8 +273,11 @@ export default function RulesPage() {
           Entry is <strong>{ENTRY_LABEL}</strong>, split 50/50:{" "}
           <strong>{BASE_SPLIT.pot}</strong> into the prize pot and{" "}
           <strong>{BASE_SPLIT.club}</strong> to the club. That same 50/50 split
-          applies to <em>every</em> payment, including the larger newcomer
-          buy-ins below.
+          applies to <em>every</em> payment, including{" "}
+          <a href="#buy-back" className="text-blue-600 hover:underline">
+            buy-backs
+          </a>{" "}
+          and the larger newcomer buy-ins below.
         </p>
         <p>
           The prize pot is the pot-half of every entry paid, plus anything
@@ -247,10 +292,22 @@ export default function RulesPage() {
       </Section>
 
       <Section id="ending" title="How it ends">
+        <p>
+          A round is not over until <em>every</em> game in it has been played —
+          the Sunday and Monday fixtures count exactly as much as the Saturday
+          ones. Who has won is read off{" "}
+          <strong>once the whole round has been settled</strong>, never part-way
+          through it.
+        </p>
         <ul className="list-disc space-y-2 pl-5">
           <li>
-            <strong>One entry left</strong> — that entry is the Last Man
-            Standing and wins the entire pot. The competition ends.
+            <strong>One entry left once the round is settled</strong>{" "}— that
+            entry is the Last Man Standing and wins the entire pot, once every{" "}
+            <a href="#buy-back" className="text-blue-600 hover:underline">
+              buy-back window
+            </a>{" "}
+            for that round has closed without anyone coming back. Then the
+            competition ends.
           </li>
           <li>
             <strong>The last entries all belong to the same person</strong> —
@@ -259,10 +316,30 @@ export default function RulesPage() {
             win two shares.
           </li>
           <li>
-            <strong>Everyone goes out in the same round</strong> — nobody wins.
-            The pot rolls over and a new competition starts.
+            <strong>Everyone goes out in the same round</strong> — nobody wins,{" "}
+            <em>unless</em> somebody buys back in before the next round&apos;s
+            deadline. If nobody does, the pot rolls over and a new competition
+            starts.
           </li>
         </ul>
+        <p>
+          So being the last one standing on a Saturday night is not the same as
+          winning. If everyone else has gone out and your team plays on the
+          Sunday, the competition is still live: win it and you have won the lot,
+          lose it and everyone is out in the same round — nobody wins and the pot
+          rolls over.
+        </p>
+        <p>
+          For the same reason, being the last one standing before the{" "}
+          <a href="#buy-back" className="text-blue-600 hover:underline">
+            buy-back window
+          </a>{" "}
+          closes is not winning either. Somebody knocked out early can still pay
+          to come back, and until that deadline passes nothing is settled —
+          which cuts both ways: a round that wipes out{" "}
+          <em>everybody</em> does not roll the pot over until the window closes
+          with nobody having bought back in.
+        </p>
       </Section>
 
       <Section id="rollovers" title="Rollovers and re-entry">
@@ -314,8 +391,8 @@ export default function RulesPage() {
       </Section>
 
       <p className="mt-10 text-center text-sm text-gray-500">
-        <Link href="/board" className="text-blue-600 hover:underline">
-          See who&apos;s still in
+        <Link href="/leaderboard" className="text-blue-600 hover:underline">
+          See the leaderboard
         </Link>{" "}
         ·{" "}
         <Link href="/" className="text-blue-600 hover:underline">

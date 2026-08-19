@@ -28,8 +28,11 @@ verification to run afterwards.
       review removed `entries.id` from the public `standing_board` view (that
       uuid is the pick-link credential and must not be readable with the
       publishable key), and auto-results was removed, so `settlement-fn.sql`
-      now drops `lms_apply_fixture_results`. Both files converge a database that
-      predates the change and touch no data.
+      now drops `lms_apply_fixture_results`. `lms_settle_round` has also gained
+      the `missing_results` guard — it refuses to settle a round while any
+      fixture a surviving entry picked is still without a result, so nobody can
+      be crowned on a Sunday game that has not been played. All of these
+      converge a database that predates the change and touch no data.
 
 ## 2. Create the project
 
@@ -112,14 +115,15 @@ Optional, and **only** once a custom domain is pointed at the app:
 - [ ] `$SITE` — homepage renders: crest, how it works, the £10 / £5 / £5 split,
       and either the live round or the "starts soon — season kicks off Friday 21
       August" state. Whichever it shows should match reality.
-- [ ] `$SITE/board` — renders. With no competition yet it says so honestly
-      rather than erroring.
+- [ ] `$SITE/leaderboard` — renders: crest, competition name, the alive count,
+      the pot, the round card with its countdown, then the two standings tables.
+      With no competition yet it says so honestly rather than erroring.
+- [ ] `$SITE/board` and `$SITE/grid` both land on `/leaderboard` (307). These
+      are the links already shared in the WhatsApp group.
 - [ ] `$SITE/rules` — renders in full, all nine sections, buy-in table included.
-- [ ] `$SITE/grid` — renders. Picks are entered in admin, so this is the only
-      pick surface players have.
 - [ ] `$SITE/pick/anything` and `$SITE/find` both 404. Players have no
       pick-entry page: every pick goes through a club contact to the organiser.
-- [ ] Nav links (The board, Picks, Rules) work, and the Footy Fees logo shows at
+- [ ] Nav links (Leaderboard, Rules) work, and the Footy Fees logo shows at
       desktop width.
 - [ ] On a phone, not just a desktop window narrowed down.
 
