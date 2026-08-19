@@ -214,19 +214,29 @@ export default function RulesPage() {
 
       <Section id="buy-back" title="Buying back in">
         <p>
-          Go out <strong>early</strong> and you get one chance to pay your way
-          back in. If your entry is knocked out in{" "}
+          Go out <strong>early</strong> and you get a chance to pay your way back
+          in. If your entry is knocked out in{" "}
           <strong>round 1, 2 or 3</strong>, you can buy it back into the same
           competition for another <strong>{ENTRY_LABEL}</strong>.
         </p>
         <p>
-          It is a <strong>one-off, for the very next round only</strong>. Out in
+          The offer is <strong>for the very next round only</strong>. Out in
           round 2 means one chance, for round 3 — and the organiser has to have
           the money and have recorded it{" "}
           <strong>before that round&apos;s deadline</strong>. Miss that window
           and your entry is out for good: you can&apos;t sit a round out and
           rejoin later, and you can&apos;t buy back at all once you have been
           knocked out in round 4 or later.
+        </p>
+        <p>
+          That chance goes with the <strong>elimination</strong>, not with the
+          whole competition. Buy back in, play on, and get knocked out again in a
+          round that still qualifies, and you get a{" "}
+          <strong>fresh</strong> offer for that new elimination — another{" "}
+          {ENTRY_LABEL}, for the round after it. Out in round 1, back for round
+          2, out again in round 2? You can buy back once more for round 3. Once
+          you are knocked out in round 4 or later, that is the end of it however
+          you got there.
         </p>
         <p>
           The {ENTRY_LABEL} splits 50/50 like any other payment —{" "}
@@ -339,6 +349,13 @@ export default function RulesPage() {
           which cuts both ways: a round that wipes out{" "}
           <em>everybody</em> does not roll the pot over until the window closes
           with nobody having bought back in.
+        </p>
+        <p>
+          That only applies to <strong>rounds 1, 2 and 3</strong>, because those
+          are the only rounds anyone can buy back from. From{" "}
+          <strong>round 4 onwards</strong> there is no window and no waiting: the
+          last one standing has won the moment the round is settled, and a round
+          that knocks everybody out rolls the pot over there and then.
         </p>
       </Section>
 

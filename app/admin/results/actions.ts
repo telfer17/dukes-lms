@@ -239,8 +239,14 @@ export async function settleCurrentRound(): Promise<ActionState> {
     return { error: settlementRefusal(result, round.round_number, round.matchday) };
   }
 
+  // Everything a settle moves. /admin/entrants is where the eliminations, the
+  // pick outcomes and any new buy-back offers show up — an offer that expires at
+  // the next deadline must not be waiting on a cache — and /leaderboard is the
+  // public standings. (/board was the old public route; it redirects to
+  // /leaderboard now and revalidating it did nothing.)
   revalidatePath("/admin/results");
-  revalidatePath("/board");
+  revalidatePath("/admin/entrants");
+  revalidatePath("/leaderboard");
 
   if (result.code === "locked_provisional") {
     // Deliberately NOT settled. The rules say a player cannot win outright on a

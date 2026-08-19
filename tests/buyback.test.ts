@@ -782,3 +782,94 @@ describe("planBuybacks", () => {
     ).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The round boundary: pending is a rounds-1-to-3 state, and only that
+// ---------------------------------------------------------------------------
+//
+// Nothing pends unless a window actually exists, and a window only exists for
+// an elimination in rounds 1–3. So a round-4 settlement decides the competition
+// outright — there is nothing to wait for, and waiting would strand a finished
+// competition until an organiser pressed something.
+//
+// This falls out of the eligibility band rather than being a separate gate, and
+// that is exactly why it is pinned here: the two rules are one rule, and a
+// change to the band silently moves this boundary too.
+
+describe("round 4 and later — settlement decides it there and then", () => {
+  const rounds = new Map([
+    [4, round(4, { deadline: LATER })],
+    [5, round(5, { deadline: LATER })],
+  ]);
+  const lookup = (n: number) => rounds.get(n);
+
+  it("a field wiped out in round 4 rolls over IMMEDIATELY, never pending", () => {
+    const out = [
+      candidate({ entry_id: "a", participant_id: "p1", eliminated_round_number: 4 }),
+      candidate({ entry_id: "b", participant_id: "p2", eliminated_round_number: 4 }),
+    ];
+    // Round 5 is still to come, and it makes no difference: neither elimination
+    // is eligible, so neither has a window.
+    expect(openBuybackWindows(out, lookup, NOW)).toEqual([]);
+
+    expect(
+      resolveCompetitionState(
+        [entry("a", "p1", "eliminated"), entry("b", "p2", "eliminated")],
+        openBuybackWindows(out, lookup, NOW)
+      )
+    ).toEqual({ kind: "rollover" });
+  });
+
+  it("a sole survivor of round 4 WINS immediately", () => {
+    const out = [
+      candidate({ entry_id: "b", participant_id: "p2", eliminated_round_number: 4 }),
+    ];
+    expect(openBuybackWindows(out, lookup, NOW)).toEqual([]);
+
+    expect(
+      resolveCompetitionState(
+        [entry("a", "p1", "active"), entry("b", "p2", "eliminated")],
+        openBuybackWindows(out, lookup, NOW)
+      )
+    ).toEqual({ kind: "won", participant_id: "p1", entry_ids: ["a"] });
+  });
+
+  it("but round 3 — one round earlier — still pends both ways", () => {
+    const r3 = new Map([[4, round(4, { deadline: LATER })]]);
+    const wipedOut = [
+      candidate({ entry_id: "a", participant_id: "p1", eliminated_round_number: 3 }),
+      candidate({ entry_id: "b", participant_id: "p2", eliminated_round_number: 3 }),
+    ];
+    expect(
+      resolveCompetitionState(
+        [entry("a", "p1", "eliminated"), entry("b", "p2", "eliminated")],
+        openBuybackWindows(wipedOut, (n) => r3.get(n), NOW)
+      )
+    ).toMatchObject({ kind: "pending_rollover", window_closes: LATER });
+
+    const soleSurvivor = [
+      candidate({ entry_id: "b", participant_id: "p2", eliminated_round_number: 3 }),
+    ];
+    expect(
+      resolveCompetitionState(
+        [entry("a", "p1", "active"), entry("b", "p2", "eliminated")],
+        openBuybackWindows(soleSurvivor, (n) => r3.get(n), NOW)
+      )
+    ).toMatchObject({ kind: "pending_win", participant_id: "p1" });
+  });
+
+  it("a round-3 elimination's window is shut by the time round 4 is settled", () => {
+    // Round 4 cannot be settled until its own deadline has passed, and that
+    // deadline IS the window. So even the last entry that could ever buy back
+    // has no live offer once round 4 settles — this is the belt to the band's
+    // braces.
+    const shut = new Map([[4, round(4, { deadline: EARLIER, status: "settled" })]]);
+    expect(
+      openBuybackWindows(
+        [candidate({ eliminated_round_number: 3 })],
+        (n) => shut.get(n),
+        NOW
+      )
+    ).toEqual([]);
+  });
+});

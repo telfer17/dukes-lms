@@ -791,13 +791,54 @@ describe("two entries left, Saturday and Sunday", () => {
   });
 
   it("C — once the postponed game is played and lost, it is a rollover", () => {
-    const settled = settleRound(
+    // The TRANSITION, not just the destination: settle the same round twice,
+    // first with the game still postponed and then with the real result. Only
+    // the pair proves the lock is temporary — asserting the rollover alone is
+    // indistinguishable from test A, where the game was played all along and no
+    // provisional lock ever existed.
+
+    // 1. Postponed. P2 survives on it, so the win is provisional and the round
+    //    LOCKS rather than settling.
+    const locked = settleRound(
       ENTRIES,
+      PICKS,
+      [saturday, sunday({ status: "postponed", result: null })],
+      1
+    );
+    const provisionalEnd = resolveEndState(locked.entries);
+    expect(provisionalEnd).toEqual({
+      kind: "won",
+      participant_id: "p2",
+      entry_ids: ["e2"],
+    });
+    expect(
+      isWinPendingUnplayedFixtures(provisionalEnd, locked.survivedViaUnplayed)
+    ).toBe(true);
+    // Nobody has been eliminated by the postponement itself.
+    expect(locked.entries[1].status).toBe("active");
+
+    // 2. The game is played and Chelsea lose it. Re-settling the SAME round
+    //    from the SAME starting entries — which is what a re-settle does, the
+    //    lock having left P2 active — now takes P2 out too.
+    const resettled = settleRound(
+      locked.entries,
       PICKS,
       [saturday, sunday({ result: "away" })],
       1
     );
-    expect(resolveEndState(settled.entries)).toEqual({ kind: "rollover" });
+
+    expect(resettled.survivedViaUnplayed.size).toBe(0);
+    expect(resettled.entries.map((e) => e.status)).toEqual([
+      "eliminated",
+      "eliminated",
+    ]);
+
+    const finalEnd = resolveEndState(resettled.entries);
+    expect(finalEnd).toEqual({ kind: "rollover" });
+    // And the provisional flag is gone with it — there is no win left to hold.
+    expect(
+      isWinPendingUnplayedFixtures(finalEnd, resettled.survivedViaUnplayed)
+    ).toBe(false);
   });
 
   it("D — P2 wins on the Sunday: crowned outright, nothing provisional", () => {

@@ -713,3 +713,65 @@ describe("buildSettlementPlan — a second elimination gets a second window", ()
     expect(built.plan.end.kind).toBe("won");
   });
 });
+
+describe("buildSettlementPlan — a round-4 settlement is final on the spot", () => {
+  // The plan, not just the engine: a round-4 wipeout must reach the transaction
+  // as end kind 'rollover', not 'pending'. Pending would leave the competition
+  // active with nobody in it, waiting on a window that cannot exist, until an
+  // organiser noticed and pressed Finalise.
+  const ROUND_FOUR = { id: "r4", round_number: 4, matchday: 1 };
+
+  const build4 = (
+    overrides: Partial<Parameters<typeof buildSettlementPlan>[0]> = {}
+  ) =>
+    buildSettlementPlan({
+      competitionId: "c1",
+      round: ROUND_FOUR,
+      roundNumberById: new Map([["r4", 4]]),
+      teams: TEAMS,
+      fixtures: [
+        fixture(10, 1, 2, "played", "home"), // Arsenal beat Aston Villa
+        fixture(11, 3, 4, "played", "draw"), // Bournemouth v Brentford drawn
+      ],
+      entries: [entry("e1", "p1"), entry("e2", "p2")],
+      picks: [
+        { entry_id: "e1", round_id: "r4", team_id: 3 }, // drew — out
+        { entry_id: "e2", round_id: "r4", team_id: 4 }, // drew — out
+      ],
+      // Round 5 is still to come, with its deadline in the future. Under the
+      // rounds-1-to-3 band that buys nobody anything.
+      allRounds: [
+        { round_number: 4, deadline: WINDOW_SHUT, status: "pending" },
+        { round_number: 5, deadline: WINDOW_OPEN, status: "pending" },
+      ],
+      buybacks: [],
+      now: NOW,
+      ...overrides,
+    });
+
+  it("all eliminated in round 4 → rollover, not pending", () => {
+    const built = build4();
+    if (!built.ok) throw new Error(built.reason);
+
+    expect(built.openWindows).toEqual([]);
+    expect(built.state).toEqual({ kind: "rollover" });
+    expect(built.plan.end.kind).toBe("rollover");
+  });
+
+  it("a sole survivor of round 4 → won, and crowned in the same transaction", () => {
+    const built = build4({
+      picks: [
+        { entry_id: "e1", round_id: "r4", team_id: 1 }, // Arsenal won — survives
+        { entry_id: "e2", round_id: "r4", team_id: 4 }, // drew — out
+      ],
+    });
+    if (!built.ok) throw new Error(built.reason);
+
+    expect(built.openWindows).toEqual([]);
+    expect(built.plan.end).toEqual({
+      kind: "won",
+      participant_id: "p1",
+      winner_entry_ids: ["e1"],
+    });
+  });
+});

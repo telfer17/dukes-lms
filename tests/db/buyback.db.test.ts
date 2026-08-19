@@ -500,6 +500,107 @@ suite(hasDatabase ? "buy-back (integration)" : SKIP_NOTICE, () => {
   });
 
   // =========================================================================
+  // One buy-back per ELIMINATION, not per entry
+  // =========================================================================
+
+  describe("an entry that goes out twice", () => {
+    it("gets a second, separate buy-back for the second elimination", async () => {
+      await seedFixtures();
+      // A third matchday to come back into.
+      await db.addFixture({
+        matchday: 3,
+        homeTeamId: team.get("Liverpool")!,
+        awayTeamId: team.get("Leeds United")!,
+        status: "played",
+        result: "home",
+      });
+
+      const competitionId = await db.addCompetition();
+      const round1 = await db.addRound({
+        competitionId, roundNumber: 1, matchday: 1, deadlineHours: -8,
+      });
+      const round2 = await db.addRound({
+        competitionId, roundNumber: 2, matchday: 2, deadlineHours: 4,
+      });
+      const round3 = await db.addRound({
+        competitionId, roundNumber: 3, matchday: 3, deadlineHours: 24,
+      });
+
+      const ann = await db.addEntry(competitionId, await db.addParticipant("Ann"));
+      const bob = await db.addEntry(competitionId, await db.addParticipant("Bob"));
+
+      // ---- round 1: both out ----
+      await db.addPick({
+        competitionId, entryId: ann, roundId: round1,
+        teamId: team.get("Aston Villa")!, // lost
+      });
+      await db.addPick({
+        competitionId, entryId: bob, roundId: round1,
+        teamId: team.get("Brentford")!, // drew
+      });
+      await db.settle(plan(await planFromDatabase(db, competitionId, round1)));
+
+      // ---- Ann buys her FIRST elimination back ----
+      expect(await db.buyBack(ann, round2)).toMatchObject({
+        ok: true, eliminated_round_number: 1, round_number: 2,
+      });
+
+      // ---- round 2: Ann goes out again ----
+      await db.addPick({
+        competitionId, entryId: ann, roundId: round2,
+        teamId: team.get("Fulham")!, // Everton v Fulham drawn
+      });
+      await closeWindow(round2);
+      const second = await db.settle(
+        plan(await planFromDatabase(db, competitionId, round2))
+      );
+      // Round 2 is an eligible elimination, so this is pending — not a rollover.
+      expect(second).toMatchObject({ ok: true, end_kind: "pending" });
+      expect(await db.entryStatuses(competitionId)).toEqual({
+        Ann: "eliminated",
+        Bob: "eliminated",
+      });
+
+      // ---- and she may buy back AGAIN, for the new elimination ----
+      expect(await db.buyBack(ann, round3)).toMatchObject({
+        ok: true, eliminated_round_number: 2, round_number: 3,
+      });
+
+      // Two payments, two windows, one entry. £20 of buy-backs in the pot.
+      expect(await db.buybackRows(competitionId)).toEqual([
+        {
+          entry_id: ann, paid: true, amount_paid_pence: 1000,
+          eliminated_round_number: 1, for_round_number: 2,
+        },
+        {
+          entry_id: ann, paid: true, amount_paid_pence: 1000,
+          eliminated_round_number: 2, for_round_number: 3,
+        },
+      ]);
+
+      // Her used teams have survived both revivals.
+      const used = (
+        await db.sql(
+          `select t.name from picks p
+             join teams t on t.id = p.team_id
+            where p.entry_id = $1 order by t.name`,
+          [ann]
+        )
+      ).map((r) => r.name);
+      expect(used).toEqual(["Aston Villa", "Fulham"]);
+
+      // Bob, meanwhile, went out in round 1 and let his one window lapse.
+      expect(await db.buyBack(bob, round2)).toMatchObject({
+        ok: false, code: "window_closed",
+      });
+      expect(await db.entryStatuses(competitionId)).toEqual({
+        Ann: "active",
+        Bob: "eliminated",
+      });
+    });
+  });
+
+  // =========================================================================
   // The sole survivor who is not yet the winner
   // =========================================================================
 

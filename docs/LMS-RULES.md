@@ -62,15 +62,17 @@ re-deriving behaviour.
 ## Buy-back
 
 An entry eliminated **early** gets one chance to pay its way back into the
-**same** competition.
+**same** competition — one chance **per elimination**, not one per competition.
+An entry that buys back, plays on and is eliminated **again** in an eligible
+round gets a **fresh** window for that new elimination.
 
 - **Who is eligible.** An entry eliminated in **round 1, 2 or 3** may be bought
   back by its owner for another **£10**. Eligibility is decided by the round the
   entry went **out** in — eliminated in round 4 or later, there is **no**
   buy-back. A round-3 elimination is the last that can ever buy back; it returns
   for round 4.
-- **One window, immediately following round only.** Eliminated in round N → a
-  single buy-back window, for round **N+1**. It must be confirmed — **paid and
+- **One window per elimination, immediately following round only.** Eliminated in
+  round N → a single buy-back window, for round **N+1**. It must be confirmed — **paid and
   recorded by the organiser** — **before round N+1's pick deadline**. This is a
   single, time-boxed offer, not a standing option: miss that window and the entry
   is **permanently out**. You **cannot** skip a round and buy back later — out in
@@ -111,9 +113,9 @@ Buy-backs resolve **before** rollover.
   deadline.
 
 **Pending rollover.** An all-eliminated round is **settled** like any other, but
-the competition's **rollover is not finalised** at that moment. The competition
-enters a **pending** state that lasts until that round's buy-back window closes —
-i.e. until the **next round's pick deadline**:
+where a buy-back window exists the competition's **rollover is not finalised** at
+that moment. The competition enters a **pending** state that lasts until that
+round's buy-back window closes — i.e. until the **next round's pick deadline**:
 
 - Any eligible entry completing a buy-back before then → the competition
   **continues**, the pending state clears, and there is no rollover.
@@ -123,9 +125,21 @@ i.e. until the **next round's pick deadline**:
 This mirrors the provisional-win lock: a competition-level state that resolves on
 a **deadline**, not instantly.
 
-**Operational rule for the organiser:** when a round wipes out the field, do not
-declare or settle the rollover until the buy-back window has closed with no
-buy-backs taken. Until then the competition is pending, not rolled over.
+**Pending only applies to rounds 1, 2 and 3.** There is nothing to wait for
+unless a window actually exists, and a window only exists for an elimination in
+rounds 1–3. So:
+
+- A field wiped out in **round 1, 2 or 3** → **pending**, until that window
+  closes.
+- A field wiped out in **round 4 or later** → **rollover immediately, on
+  settlement**. Everyone who went out did so too late to buy back, there is no
+  window, and waiting would be waiting for nothing.
+
+**Operational rule for the organiser:** when a round **1–3** wipes out the field,
+do not declare or settle the rollover until the buy-back window has closed with
+no buy-backs taken — until then the competition is pending, not rolled over.
+From round 4 on there is no window, and the rollover is final the moment the
+round is settled.
 
 ## End states
 
@@ -138,19 +152,25 @@ and it is a rollover.
 
 A settled round is also not the whole story while a [buy-back](#buy-back) window
 is still open. Being the last entry standing before eliminated entries' buy-back
-windows close is **not yet winning**.
+windows close is **not yet winning**. That caveat only bites in **rounds 1, 2 and
+3**: from round 4 on nobody eliminated can buy back, so there is no window and
+the round settles the competition outright.
 
 - **One entry left once the round is settled *and* the buy-back window for that
   round has closed without a buy-back that would revive a competitor** → that
   entry is the Last Man Standing, wins the entire pot, and the competition ends.
   If an eligible entry does buy back in before the next round's pick deadline,
-  the sole survivor has not won: the competition continues with both.
+  the sole survivor has not won: the competition continues with both. A sole
+  survivor of **round 4 or later** wins **immediately on settlement** — no window
+  can be open, so there is nothing to wait for.
 - **Last entries all belong to the same person** → that person wins, and takes
   the **single pot**. It is winner-takes-all: holding the last two entries does
   not win two shares, and there are no split or runner-up places.
 - **Everyone eliminated in the same round** (no survivors) **and no eligible
   entry buys back** before the next round's pick deadline → the pot rolls over
-  and a new competition begins (see [Buy-back](#buy-back) and Rollovers).
+  and a new competition begins (see [Buy-back](#buy-back) and Rollovers). From
+  round 4 on there is no eligible entry by definition, so the rollover is
+  immediate.
 
 ## Rollovers & re-entry
 
