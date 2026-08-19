@@ -1,15 +1,15 @@
 // The two groups every public screen splits the field into, and the words both
 // of them use for it.
 //
-// /board and /grid answer the same question — who is left, and how far did the
-// rest get — so they must not answer it in two vocabularies or two orders. The
-// split, the ranking and the headings all live here, and both pages import
-// them; a change of wording is one edit, not a hunt.
+// /leaderboard asks this question twice — once in the headline count, once in
+// the two tables under it — and it must not answer in two vocabularies or two
+// orders. The split, the ranking and the headings all live here, so a change of
+// wording is one edit, not a hunt.
 //
-// Pure — no imports, no I/O — and generic over the row shape, because the board
-// reads the public standing_board view while the grid reads a projection of the
-// private tables. They agree on the three fields that decide order and nothing
-// else.
+// Pure — no imports, no I/O — and generic over the row shape: the page counts
+// projected grid rows while the tables carry cells too, and the homepage's
+// board rows are a third shape again. They agree on the three fields that
+// decide order and nothing else.
 
 export type StandingRow = {
   name: string;
@@ -63,8 +63,8 @@ export function splitStandings<T extends StandingRow>(
 }
 
 // ---------------------------------------------------------------------------
-// The words. Shared so /board and /grid cannot describe the same two groups
-// differently.
+// The words. Shared so the headline and the tables cannot describe the same two
+// groups differently.
 // ---------------------------------------------------------------------------
 
 /** Heading for the survivors — past tense once the competition is over. */

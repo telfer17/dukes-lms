@@ -19,6 +19,25 @@ const nextConfig: NextConfig = {
         destination: "/admin/entrants",
         permanent: false,
       },
+
+      // /board and /grid merged into /leaderboard. These two links are in the
+      // WhatsApp group, in the launch message and on people's home screens —
+      // the whole point of the competition is that players open them on a
+      // Saturday — so they keep working rather than 404ing.
+      //
+      // 307, like the one above: temporary costs nothing, and a permanent
+      // redirect is cached by the browser more or less forever, which would be
+      // a nuisance if either name is ever wanted again.
+      {
+        source: "/board",
+        destination: "/leaderboard",
+        permanent: false,
+      },
+      {
+        source: "/grid",
+        destination: "/leaderboard",
+        permanent: false,
+      },
     ];
   },
 };

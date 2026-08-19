@@ -143,6 +143,7 @@ export class TestDb {
     await this.sql(
       readFileSync(join(repoRoot, "db", "settlement-fn.sql"), "utf8")
     );
+    await this.sql(readFileSync(join(repoRoot, "db", "buyback.sql"), "utf8"));
   }
 
   /** Wipe everything except the 20-team reference seed. */
@@ -152,7 +153,7 @@ export class TestDb {
     // reach it past the guard by holding a connection opened some other way.
     assertSafeDatabaseUrl(DATABASE_URL);
     await this.sql(`
-      truncate picks, entries, rounds, competitions, participants, fixtures
+      truncate buybacks, picks, entries, rounds, competitions, participants, fixtures
       restart identity cascade;
     `);
   }
@@ -258,6 +259,40 @@ export class TestDb {
     ]);
   }
 
+  async buyBack(
+    entryId: string,
+    roundId: string,
+    amountPence = 1000,
+    paid = true
+  ): Promise<Record<string, unknown>> {
+    return this.value("select lms_buy_back_entry($1, $2, $3, $4) as r", [
+      entryId,
+      roundId,
+      amountPence,
+      paid,
+    ]);
+  }
+
+  async finalise(plan: unknown): Promise<Record<string, unknown>> {
+    return this.value("select lms_finalise_competition($1::jsonb) as r", [
+      JSON.stringify(plan),
+    ]);
+  }
+
+  async buybackRows(competitionId: string): Promise<Row[]> {
+    return this.sql(
+      `select b.entry_id, b.paid, b.amount_paid_pence,
+              er.round_number as eliminated_round_number,
+              tr.round_number as for_round_number
+         from buybacks b
+         join rounds er on er.id = b.eliminated_round_id
+         join rounds tr on tr.id = b.round_id
+        where b.competition_id = $1
+        order by tr.round_number`,
+      [competitionId]
+    );
+  }
+
   async setFixtureResult(
     fixtureId: number,
     status: string,
@@ -331,7 +366,7 @@ export async function planFromDatabase(
     [roundId]
   );
   const rounds = await db.sql(
-    "select id, round_number from rounds where competition_id = $1",
+    "select id, round_number, deadline, status from rounds where competition_id = $1",
     [competitionId]
   );
   const teams = await db.sql("select id, name from teams order by name");
@@ -340,9 +375,22 @@ export async function planFromDatabase(
     [round.matchday]
   );
   const entries = await db.sql(
-    `select e.id, e.participant_id, e.status, p.name
-       from entries e join participants p on p.id = e.participant_id
+    `select e.id, e.participant_id, e.status, p.name, r.round_number as eliminated_round_number
+       from entries e
+       join participants p on p.id = e.participant_id
+       left join rounds r on r.id = e.eliminated_round_id
       where e.competition_id = $1`,
+    [competitionId]
+  );
+  const buybacks = await db.sql(
+    `select b.id,
+            b.entry_id,
+            er.round_number as eliminated_round_number,
+            tr.round_number as for_round_number
+       from buybacks b
+       join rounds er on er.id = b.eliminated_round_id
+       join rounds tr on tr.id = b.round_id
+      where b.competition_id = $1`,
     [competitionId]
   );
   const picks = await db.sql(
@@ -374,11 +422,90 @@ export async function planFromDatabase(
       participant_id: e.participant_id as string,
       status: e.status as "active" | "eliminated" | "winner",
       label: e.name as string,
+      eliminated_round_number:
+        e.eliminated_round_number === null
+          ? null
+          : Number(e.eliminated_round_number),
     })),
     picks: picks.map((p) => ({
       entry_id: p.entry_id as string,
       round_id: p.round_id as string,
       team_id: Number(p.team_id),
     })),
+    allRounds: rounds.map((r) => ({
+      round_number: Number(r.round_number),
+      deadline: new Date(r.deadline as string).toISOString(),
+      status: r.status as "pending" | "locked" | "settled",
+    })),
+    buybacks: buybacks.map((b) => ({
+      id: b.id as string,
+      entry_id: b.entry_id as string,
+      eliminated_round_number: Number(b.eliminated_round_number),
+      for_round_number: Number(b.for_round_number),
+    })),
+  });
+}
+
+/**
+ * The finalisation plan, read from the database the same way the admin action
+ * reads it — same builder, same engine. See planFromDatabase.
+ */
+export async function finalisationPlanFromDatabase(
+  db: TestDb,
+  competitionId: string
+) {
+  const { buildFinalisationPlan } = await import("@/lib/settlement-plan");
+
+  const rounds = await db.sql(
+    "select round_number, deadline, status from rounds where competition_id = $1",
+    [competitionId]
+  );
+  const entries = await db.sql(
+    `select e.id, e.participant_id, e.status, p.name, r.round_number as eliminated_round_number
+       from entries e
+       join participants p on p.id = e.participant_id
+       left join rounds r on r.id = e.eliminated_round_id
+      where e.competition_id = $1`,
+    [competitionId]
+  );
+  const buybacks = await db.sql(
+    `select b.id,
+            b.entry_id,
+            er.round_number as eliminated_round_number,
+            tr.round_number as for_round_number
+       from buybacks b
+       join rounds er on er.id = b.eliminated_round_id
+       join rounds tr on tr.id = b.round_id
+      where b.competition_id = $1`,
+    [competitionId]
+  );
+  const settled = rounds
+    .filter((r) => r.status === "settled")
+    .map((r) => Number(r.round_number));
+
+  return buildFinalisationPlan({
+    competitionId,
+    entries: entries.map((e) => ({
+      id: e.id as string,
+      participant_id: e.participant_id as string,
+      status: e.status as "active" | "eliminated" | "winner",
+      label: e.name as string,
+      eliminated_round_number:
+        e.eliminated_round_number === null
+          ? null
+          : Number(e.eliminated_round_number),
+    })),
+    allRounds: rounds.map((r) => ({
+      round_number: Number(r.round_number),
+      deadline: new Date(r.deadline as string).toISOString(),
+      status: r.status as "pending" | "locked" | "settled",
+    })),
+    buybacks: buybacks.map((b) => ({
+      id: b.id as string,
+      entry_id: b.entry_id as string,
+      eliminated_round_number: Number(b.eliminated_round_number),
+      for_round_number: Number(b.for_round_number),
+    })),
+    settledRoundNumber: settled.length === 0 ? 0 : Math.max(...settled),
   });
 }

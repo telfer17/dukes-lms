@@ -590,4 +590,387 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
       });
     });
   });
+  // =========================================================================
+  // The last two standing, across a Saturday and a Sunday
+  //
+  // The scenario that actually decides a competition, and the one it is worst
+  // to get wrong: two entries left, their games on different days. The same
+  // four cases are pinned at engine level (tests/lms.test.ts) and plan level
+  // (tests/settlement-plan.test.ts); here they run against a real database,
+  // through the real function, and the answer has to be identical.
+  //
+  //   P1 picks Aston Villa, who lose at Arsenal on the Saturday.
+  //   P2 picks Chelsea, and the Sunday game is what varies.
+  // =========================================================================
+
+  describe("two entries left, Saturday and Sunday", () => {
+    async function seedWeekend(
+      sunday: {
+        status: "scheduled" | "played" | "postponed";
+        result?: "home" | "away" | "draw" | null;
+      }
+    ) {
+      const saturdayFixture = await db.addFixture({
+        matchday: 1,
+        homeTeamId: team.get("Arsenal")!,
+        awayTeamId: team.get("Aston Villa")!,
+        status: "played",
+        result: "home",
+        kickoffHours: -24,
+      });
+      const sundayFixture = await db.addFixture({
+        matchday: 1,
+        homeTeamId: team.get("Chelsea")!,
+        awayTeamId: team.get("Crystal Palace")!,
+        status: sunday.status,
+        result: sunday.result ?? null,
+        // Tomorrow. The deadline was the first kick-off — Saturday's — so the
+        // round is closed and settleable while this game is still to come.
+        kickoffHours: 18,
+      });
+      const competitionId = await db.addCompetition();
+      const roundId = await db.addRound({
+        competitionId,
+        roundNumber: 1,
+        matchday: 1,
+        deadlineHours: -25,
+      });
+      const p1Id = await db.addParticipant("P1");
+      const p2Id = await db.addParticipant("P2");
+      const p1 = await db.addEntry(competitionId, p1Id);
+      const p2 = await db.addEntry(competitionId, p2Id);
+      await db.addPick({ competitionId, entryId: p1, roundId, teamId: team.get("Aston Villa")! });
+      await db.addPick({ competitionId, entryId: p2, roundId, teamId: team.get("Chelsea")! });
+      return {
+        competitionId,
+        roundId,
+        p1,
+        p2,
+        p1Id,
+        p2Id,
+        saturdayFixture,
+        sundayFixture,
+        sunday,
+      };
+    }
+
+    /**
+     * The fingerprint half of a plan for this weekend — everything
+     * lms_settle_round re-checks against the database, all of it honest.
+     *
+     * The scenario-B tests bolt fabricated `pick_outcomes` and `end` onto this.
+     * That is the point: the lie is never in the fingerprints, which is why no
+     * amount of comparing the plan to the database catches it. Only asking
+     * whether the Sunday game HAS a result does.
+     */
+    function forgedPlanBase(w: Awaited<ReturnType<typeof seedWeekend>>) {
+      return {
+        competition_id: w.competitionId,
+        round_id: w.roundId,
+        matchday: 1,
+        expected_fixtures: [
+          { id: w.saturdayFixture, status: "played", result: "home" },
+          {
+            id: w.sundayFixture,
+            status: w.sunday.status,
+            result: w.sunday.result ?? null,
+          },
+        ],
+        expected_picks: [
+          { entry_id: w.p1, team_id: team.get("Aston Villa")! },
+          { entry_id: w.p2, team_id: team.get("Chelsea")! },
+        ],
+        expected_active_entry_ids: [w.p1, w.p2],
+        auto_assign: [],
+      };
+    }
+
+    it("A — both lose: rollover, and P2 is NOT crowned", async () => {
+      const { competitionId, roundId } = await seedWeekend({
+        status: "played",
+        result: "away", // Palace win at Chelsea, so P2 goes out too
+      });
+
+      const result = await db.settle(
+        plan(await planFromDatabase(db, competitionId, roundId))
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        code: "settled",
+        end_kind: "rollover",
+        survivors: 0,
+      });
+      expect(await db.entryStatuses(competitionId)).toEqual({
+        P1: "eliminated",
+        P2: "eliminated",
+      });
+      expect(await db.competitionRow(competitionId)).toMatchObject({
+        status: "rolled_over",
+        winner_participant_id: null,
+      });
+      expect(await db.roundStatus(roundId)).toBe("settled");
+    });
+
+    // -----------------------------------------------------------------------
+    // Scenario B — the Saturday-night press. P1 has lost; P2's game is
+    // tomorrow. Everything below must refuse, and refuse having written
+    // nothing.
+    // -----------------------------------------------------------------------
+    describe("B — Sunday has no result yet", () => {
+      /** Neither entry has moved and the round is untouched. */
+      async function expectNothingHappened(
+        competitionId: string,
+        roundId: string
+      ) {
+        expect(await db.entryStatuses(competitionId)).toEqual({
+          P1: "active",
+          P2: "active",
+        });
+        expect(await db.roundStatus(roundId)).toBe("pending");
+        expect(await db.competitionRow(competitionId)).toMatchObject({
+          status: "active",
+          winner_participant_id: null,
+        });
+        const picks = await db.picksForRound(roundId);
+        expect(picks.every((p) => p.outcome === "pending")).toBe(true);
+      }
+
+      it("the plan builder refuses, and NAMES the fixture it is waiting on", async () => {
+        const { competitionId, roundId } = await seedWeekend({
+          status: "scheduled",
+        });
+
+        const built = await planFromDatabase(db, competitionId, roundId);
+
+        expect(built).toEqual({
+          ok: false,
+          reason: "unsettled",
+          count: 1,
+          fixtures: ["Chelsea v Crystal Palace"],
+        });
+        // No plan exists, so nothing was even offered to the database. This is
+        // the refusal settleCurrentRound turns into "Can't settle yet — no
+        // result for Chelsea v Crystal Palace".
+        await expectNothingHappened(competitionId, roundId);
+      });
+
+      it("lms_settle_round refuses a plan that leaves P2's outcome out", async () => {
+        const w = await seedWeekend({ status: "scheduled" });
+
+        // What a settle-what-we-can implementation would send: P1 eliminated,
+        // P2 simply not mentioned.
+        const refusal = await db.settle({
+          ...forgedPlanBase(w),
+          pick_outcomes: [{ entry_id: w.p1, outcome: "eliminated" }],
+          eliminate_entry_ids: [w.p1],
+          end: { kind: "won", participant_id: w.p2Id, winner_entry_ids: [w.p2] },
+        });
+
+        expect(refusal).toMatchObject({ ok: false });
+        expect(refusal.code).toBe("missing_results");
+        expect(refusal).toMatchObject({
+          detail: { fixtures: ["Chelsea v Crystal Palace"] },
+        });
+        await expectNothingHappened(w.competitionId, w.roundId);
+      });
+
+      it("lms_settle_round refuses a plan carrying a 'pending' outcome", async () => {
+        const w = await seedWeekend({ status: "scheduled" });
+
+        const refusal = await db.settle({
+          ...forgedPlanBase(w),
+          pick_outcomes: [
+            { entry_id: w.p1, outcome: "eliminated" },
+            { entry_id: w.p2, outcome: "pending" },
+          ],
+          eliminate_entry_ids: [w.p1],
+          end: { kind: "won", participant_id: w.p2Id, winner_entry_ids: [w.p2] },
+        });
+
+        expect(refusal).toMatchObject({ ok: false, code: "missing_results" });
+        await expectNothingHappened(w.competitionId, w.roundId);
+      });
+
+      it("lms_settle_round refuses a plan that CLAIMS P2 survived an unplayed game", async () => {
+        // The one that cannot be caught by counting. This plan is structurally
+        // perfect: the fixture fingerprint matches (the Sunday game is honestly
+        // reported as scheduled), there is one settled outcome per active
+        // entry, and the end state is internally consistent. Only a check that
+        // looks at whether the fixture HAS a result can stop it — without which
+        // P2 is crowned champion on a game that has not kicked off.
+        const w = await seedWeekend({ status: "scheduled" });
+
+        const refusal = await db.settle({
+          ...forgedPlanBase(w),
+          pick_outcomes: [
+            { entry_id: w.p1, outcome: "eliminated" },
+            { entry_id: w.p2, outcome: "survived" },
+          ],
+          eliminate_entry_ids: [w.p1],
+          end: { kind: "won", participant_id: w.p2Id, winner_entry_ids: [w.p2] },
+        });
+
+        expect(refusal).toMatchObject({
+          ok: false,
+          code: "missing_results",
+          detail: { fixtures: ["Chelsea v Crystal Palace"] },
+        });
+        await expectNothingHappened(w.competitionId, w.roundId);
+      });
+
+      it("refuses when a picked team is not in the matchday at all", async () => {
+        // The neighbouring hole: not "no result yet" but "no fixture". The
+        // engine reports it as pending for the same reason, and the function
+        // has to refuse it for the same reason.
+        const w = await seedWeekend({ status: "played", result: "home" });
+        await db.sql("update picks set team_id = $1 where entry_id = $2", [
+          team.get("Sunderland")!,
+          w.p2,
+        ]);
+
+        const built = await planFromDatabase(db, w.competitionId, w.roundId);
+        expect(built).toEqual({
+          ok: false,
+          reason: "unsettled",
+          count: 1,
+          fixtures: ["Sunderland (no matchday 1 fixture)"],
+        });
+
+        const refusal = await db.settle({
+          ...forgedPlanBase(w),
+          expected_picks: [
+            { entry_id: w.p1, team_id: team.get("Aston Villa")! },
+            { entry_id: w.p2, team_id: team.get("Sunderland")! },
+          ],
+          pick_outcomes: [
+            { entry_id: w.p1, outcome: "eliminated" },
+            { entry_id: w.p2, outcome: "survived" },
+          ],
+          eliminate_entry_ids: [w.p1],
+          end: { kind: "won", participant_id: w.p2Id, winner_entry_ids: [w.p2] },
+        });
+        expect(refusal).toMatchObject({
+          ok: false,
+          code: "missing_results",
+          detail: { fixtures: ["Sunderland (no matchday 1 fixture)"] },
+        });
+        await expectNothingHappened(w.competitionId, w.roundId);
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // Scenario C — the Sunday game is called off. P2 is the only one left, but
+    // only because of a game nobody played.
+    // -----------------------------------------------------------------------
+    describe("C — Sunday postponed", () => {
+      async function lockIt() {
+        const w = await seedWeekend({ status: "postponed" });
+        const result = await db.settle(
+          plan(await planFromDatabase(db, w.competitionId, w.roundId))
+        );
+        expect(result).toMatchObject({ ok: true, code: "locked_provisional" });
+        return w;
+      }
+
+      it("LOCKS the round: P2 survives, is not crowned, competition stays active", async () => {
+        const { competitionId, roundId } = await lockIt();
+
+        expect(await db.roundStatus(roundId)).toBe("locked");
+        expect(await db.entryStatuses(competitionId)).toEqual({
+          P1: "eliminated", // a result that stands whatever happens on Sunday
+          P2: "active", // decided, but not declared
+        });
+        expect(await db.competitionRow(competitionId)).toMatchObject({
+          status: "active",
+          winner_participant_id: null,
+        });
+        const picks = await db.picksForRound(roundId);
+        expect(picks.map((p) => [p.team, p.outcome])).toEqual([
+          ["Aston Villa", "eliminated"],
+          ["Chelsea", "survived"],
+        ]);
+      });
+
+      it("re-settles as a WIN once the rearranged game is played and won", async () => {
+        const { competitionId, roundId, p2Id, sundayFixture } = await lockIt();
+
+        expect(await db.setFixtureResult(sundayFixture, "played", "home")).toMatchObject({
+          ok: true,
+        });
+
+        const result = await db.settle(
+          plan(await planFromDatabase(db, competitionId, roundId))
+        );
+
+        expect(result).toMatchObject({ ok: true, code: "settled", end_kind: "won" });
+        expect(await db.roundStatus(roundId)).toBe("settled");
+        expect(await db.entryStatuses(competitionId)).toEqual({
+          P1: "eliminated",
+          P2: "winner",
+        });
+        expect(await db.competitionRow(competitionId)).toMatchObject({
+          status: "won",
+          winner_participant_id: p2Id,
+        });
+      });
+
+      it("re-settles as a ROLLOVER once the rearranged game is played and lost", async () => {
+        // The reason the round was only locked. P2 was one result away from the
+        // pot; the result went the other way and nobody wins it.
+        const { competitionId, roundId, sundayFixture } = await lockIt();
+
+        expect(await db.setFixtureResult(sundayFixture, "played", "away")).toMatchObject({
+          ok: true,
+        });
+
+        const result = await db.settle(
+          plan(await planFromDatabase(db, competitionId, roundId))
+        );
+
+        expect(result).toMatchObject({
+          ok: true,
+          code: "settled",
+          end_kind: "rollover",
+          survivors: 0,
+        });
+        expect(await db.roundStatus(roundId)).toBe("settled");
+        expect(await db.entryStatuses(competitionId)).toEqual({
+          P1: "eliminated",
+          P2: "eliminated",
+        });
+        expect(await db.competitionRow(competitionId)).toMatchObject({
+          status: "rolled_over",
+          winner_participant_id: null,
+        });
+      });
+    });
+
+    it("D — P2 wins on the Sunday: crowned, competition won", async () => {
+      const { competitionId, roundId, p2Id } = await seedWeekend({
+        status: "played",
+        result: "home", // Chelsea win
+      });
+
+      const result = await db.settle(
+        plan(await planFromDatabase(db, competitionId, roundId))
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        code: "settled",
+        end_kind: "won",
+        survivors: 1,
+      });
+      expect(await db.entryStatuses(competitionId)).toEqual({
+        P1: "eliminated",
+        P2: "winner",
+      });
+      expect(await db.competitionRow(competitionId)).toMatchObject({
+        status: "won",
+        winner_participant_id: p2Id,
+      });
+      expect(await db.roundStatus(roundId)).toBe("settled");
+    });
+  });
 });

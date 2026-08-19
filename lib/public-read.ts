@@ -2,16 +2,17 @@
 //
 // These are the shapes the anon grants actually allow (see the grants block at
 // the end of db/lms-schema.sql): the competition header, the standing_board
-// view and the rounds table. Both the homepage and /board render from exactly
-// this data, so the two screens can never disagree about who is still in or
-// when the next deadline is.
+// view and the rounds table. The homepage renders its live state from exactly
+// this data; /leaderboard reads the same competition through
+// readPublicCompetition and derives its own counts from the picks projection,
+// so the two screens can never disagree about who is still in.
 //
 // NOTHING here selects entries.id. That uuid names an entry to every write
 // path there is, and a React `key` is serialised into the RSC payload — so
 // keying a public list off it publishes the internal id of every entry in the
 // page source. (It was worse still when /pick/[entryId] existed and the id was
 // literally the credential for changing that entry's pick; that page is gone,
-// the reason to keep the id private is not.) The board keys off name+index
+// the reason to keep the id private is not.) Public lists key off name+index
 // instead. The view no longer exposes the column either (db/lms-schema.sql);
 // this is the second lock on the same door, and tests/public-read.test.ts
 // fails if it is ever put back.

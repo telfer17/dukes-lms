@@ -1,7 +1,7 @@
 import type { ConcludedSummary } from "@/lib/concluded";
 
-// The one treatment for "this competition is over", shared by the homepage,
-// /board and /grid so the three screens cannot tell the story three ways.
+// The one treatment for "this competition is over", shared by the homepage and
+// /leaderboard so the two screens cannot tell the story two ways.
 //
 // A win is gold: the crown, the name, the pot. A rollover is not — nobody won,
 // and dressing "everyone's out" up in trophy colours would read as a result.

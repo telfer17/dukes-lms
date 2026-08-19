@@ -8,10 +8,12 @@ import {
   findDuplicateEntrant,
   type ExistingEntrant,
 } from "@/lib/admin-entrants";
-import { expectedBuyInPence } from "@/lib/competition";
+import { buybackOffers } from "@/lib/buyback";
+import { BASE_ENTRY_PENCE, expectedBuyInPence } from "@/lib/competition";
 import {
   currentRound,
   getActiveCompetition,
+  getBuybacks,
   getEntry,
   getFixturesForMatchday,
   getPicksForEntry,
@@ -313,6 +315,105 @@ export async function markGroupPaid(
 
   revalidatePath("/admin/entrants");
   return { ok: true };
+}
+
+/**
+ * Buy an eliminated entry back in — another £10, for the very next round.
+ *
+ * docs/LMS-RULES.md § Buy-back. Eligibility is NOT decided here: it comes from
+ * lib/lms.ts via buybackOffers(), the same call the page uses to decide whether
+ * to draw the button at all, so what the organiser sees and what the server
+ * enforces cannot disagree. This check is what catches a stale page — the
+ * window shut ten minutes ago and the tab has been open since lunchtime.
+ *
+ * The writes themselves are one transaction (lms_buy_back_entry, db/buyback.sql):
+ * the payment row and the revival either both land or neither does. A revived
+ * entry with no payment row is a free life and a wrong pot; a payment row with
+ * no revival is £10 taken for nothing.
+ *
+ * Records the money as PAID, at the standard £10. A buy-back is £10 flat — the
+ * newcomer ladder is about buying into an accumulated pot, which is not what
+ * this is — and the rules require it to be paid before it counts, so there is
+ * no unpaid buy-back to record.
+ */
+export async function buyBackEntry(entryId: string): Promise<ActionResult> {
+  await requireAdmin();
+
+  try {
+    const competition = await getActiveCompetition();
+    if (!competition) return { error: "No active competition." };
+
+    const entry = await getEntry(entryId);
+    if (!entry) return { error: "We couldn't find that entry." };
+    if (entry.competition_id !== competition.id) {
+      return { error: "That entry isn't in the active competition." };
+    }
+
+    const rounds = await getRounds(competition.id);
+    const buybacks = await getBuybacks(competition.id);
+
+    const offer = buybackOffers({
+      entries: [entry],
+      rounds,
+      buybacks,
+    }).get(entryId);
+
+    if (!offer || !offer.verdict.eligible) {
+      return {
+        error:
+          offer && !offer.verdict.eligible
+            ? offer.verdict.reason
+            : "This entry can't be bought back.",
+      };
+    }
+    // Belt and braces: buybackOffers only reports `eligible` alongside a round.
+    if (!offer.round) return { error: "This entry can't be bought back." };
+
+    const { data, error } = await supabaseServer.rpc("lms_buy_back_entry", {
+      p_entry_id: entryId,
+      p_round_id: offer.round.id,
+      p_amount_pence: BASE_ENTRY_PENCE,
+      p_paid: true,
+    });
+
+    if (error) {
+      console.error("buyBackEntry RPC failed:", error);
+      return { error: "Could not record the buy-back — nothing was changed." };
+    }
+
+    const result = data as { ok: boolean; code?: string } | null;
+    if (!result?.ok) {
+      switch (result?.code) {
+        case "window_closed":
+          return {
+            error:
+              "The buy-back window has closed — this entry is out for good. Nothing was changed.",
+          };
+        case "already_bought_back":
+          return { error: "This entry has already bought back once." };
+        case "entry_not_eliminated":
+          return { error: "This entry is not out, so there is nothing to buy back." };
+        case "eliminated_too_late":
+          return {
+            error:
+              "Buy-backs are only for entries eliminated in rounds 1 to 3. Nothing was changed.",
+          };
+        case "competition_not_active":
+          return { error: "This competition is over — nothing can be bought back." };
+        default:
+          console.error("buyBackEntry refused:", result);
+          return { error: "The buy-back was refused and nothing was changed." };
+      }
+    }
+
+    revalidatePath("/admin/entrants");
+    revalidatePath("/admin/results");
+    revalidatePath("/leaderboard");
+    return { ok: true };
+  } catch (e) {
+    console.error("buyBackEntry threw:", e);
+    return { error: "Could not record the buy-back — nothing was changed." };
+  }
 }
 
 /** Delete an entry. The person stays — they may hold other entries. */

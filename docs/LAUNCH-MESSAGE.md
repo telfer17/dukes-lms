@@ -48,4 +48,4 @@ no pick page of their own), round 1 locks at the first kick-off of matchday 1 â€
 > 8pm when Arsenal v Coventry kicks off. Â£10 to enter, message <ORGANISER>.
 >
 > Already in? Get your team to <ORGANISER> before 8pm and they'll put it in
-> for you. See who's picked what here: <SITE URL>/grid
+> for you. See who's picked what here: <SITE URL>/leaderboard

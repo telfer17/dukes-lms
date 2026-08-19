@@ -2,6 +2,7 @@
 
 import { useActionState, useState, useTransition } from "react";
 import {
+  buyBackEntry,
   deleteEntry,
   setEntryPaid,
   setPickForEntry,
@@ -15,6 +16,23 @@ export type SelectableTeam = { id: number; name: string };
 
 /** What this entry picked for the current round. */
 export type CurrentPick = { teamName: string; autoAssigned: boolean };
+
+/**
+ * A live buy-back offer for this entry: it went out in round 1, 2 or 3, the
+ * window for the next round is still open, and it has not used it.
+ *
+ * Null whenever there is no offer — which is most of the time, and includes
+ * every refusal. A row does not explain why an entry CAN'T buy back: the fold
+ * these rows live in is already long, and the reason is only worth reading if
+ * somebody presses a button that is no longer there, which is exactly when the
+ * server action quotes it back.
+ */
+export type BuybackControl = {
+  /** The round it would come back for. */
+  roundNumber: number;
+  /** What it costs, formatted — £10. */
+  priceLabel: string;
+};
 
 /**
  * The picker itself. Null whenever a pick cannot be entered right now — no open
@@ -60,6 +78,7 @@ export default function AdminEntryRow({
   roundKnown,
   currentPick,
   picker,
+  buyback = null,
 }: {
   id: string;
   name: string;
@@ -75,6 +94,8 @@ export default function AdminEntryRow({
   roundKnown: boolean;
   currentPick: CurrentPick | null;
   picker: PickControl | null;
+  /** A live buy-back offer, or null — see BuybackControl. */
+  buyback?: BuybackControl | null;
 }) {
   const [pending, startTransition] = useTransition();
   const [rowError, setRowError] = useState("");
@@ -190,6 +211,36 @@ export default function AdminEntryRow({
             {pickPending ? "…" : picked ? "Change" : "Save"}
           </button>
         </form>
+      )}
+
+      {/* ---- Buy-back ----
+          Only ever rendered where the rules say the offer is live (the page
+          asks lib/lms.ts, and the server action asks it again on press). It is
+          money changing hands and it cannot be undone from this screen, so it
+          confirms first and says the price out loud. */}
+      {buyback && (
+        <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2">
+          <p className="min-w-0 text-xs text-amber-900">
+            <strong>Buy back in</strong> for round {buyback.roundNumber} —{" "}
+            {buyback.priceLabel}. Used teams stay used.
+          </p>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Buy ${name} back in for round ${buyback.roundNumber}? This records ${buyback.priceLabel} paid and puts them back in the competition. Their used teams — including the one that put them out — stay used.`
+                )
+              ) {
+                run(() => buyBackEntry(id));
+              }
+            }}
+            className="shrink-0 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+          >
+            {pending ? "…" : `Buy back (${buyback.priceLabel})`}
+          </button>
+        </div>
       )}
 
       {/* ---- Line 3: money, and the row's own controls ---- */}

@@ -19,14 +19,14 @@ export default function NavBar() {
           Glasgow Dukes — Last Man Standing
         </Link>
         <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+          {/* One link, because there is one screen: the leaderboard IS the
+              picks. "The board" and "Picks" pointed at two pages that answered
+              the same question, which meant choosing before you could look. */}
           <Link
-            href="/board"
+            href="/leaderboard"
             className="py-1 text-gray-600 hover:text-gray-900"
           >
-            The board
-          </Link>
-          <Link href="/grid" className="py-1 text-gray-600 hover:text-gray-900">
-            Picks
+            Leaderboard
           </Link>
           <Link
             href="/rules"

@@ -2,23 +2,44 @@ import Link from "next/link";
 import ActionForm from "@/components/admin/ActionForm";
 import FixtureRow from "@/components/admin/FixtureRow";
 import {
+  eliminatedRoundNumber,
+  planBuybacks,
+  planRounds,
+} from "@/lib/buyback";
+import {
   currentRound,
   getActiveCompetition,
+  getBuybacks,
   getEntries,
   getFixturesForMatchday,
   getPicksForRound,
   getRounds,
   getTeams,
   isRoundOpen,
+  settledRoundNumber,
   type CompetitionRow,
   type FixtureRow as FixtureRecord,
   type PickRow,
   type RoundRow,
 } from "@/lib/lms-db";
 import type { Team } from "@/lib/lms";
-import { settleCurrentRound } from "./actions";
+import {
+  buildFinalisationPlan,
+  type FinalisationOutcome,
+} from "@/lib/settlement-plan";
+import { finaliseCompetition, settleCurrentRound } from "./actions";
 
 export const dynamic = "force-dynamic";
+
+const windowFormat = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 
 const kickoffFormat = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Europe/London",
@@ -39,6 +60,10 @@ export default async function ResultsPage() {
   let picks: PickRow[] = [];
   let activeCount = 0;
   let loadError: string | null = null;
+  // What the COMPETITION is doing, buy-back included: still running, waiting on
+  // a buy-back window, or ready to be closed off. Null until it is worked out.
+  let finalisation: FinalisationOutcome | null = null;
+  let pendingNames: string[] = [];
 
   try {
     competition = await getActiveCompetition();
@@ -52,6 +77,38 @@ export default async function ResultsPage() {
         fixtures = await getFixturesForMatchday(round.matchday);
         picks = await getPicksForRound(round.id);
       }
+
+      const buybacks = await getBuybacks(competition.id);
+      finalisation = buildFinalisationPlan({
+        competitionId: competition.id,
+        entries: entries.map((e) => ({
+          id: e.id,
+          participant_id: e.participant_id,
+          status: e.status,
+          label: e.participant?.name ?? e.id,
+          eliminated_round_number: eliminatedRoundNumber(e, rounds),
+        })),
+        allRounds: planRounds(rounds),
+        buybacks: planBuybacks(buybacks, rounds),
+        settledRoundNumber: settledRoundNumber(rounds),
+      });
+
+      // Who the competition is waiting on, by name. A count alone ("2 entries
+      // can still buy back") is not something an organiser can act on; two
+      // names are people they can ring.
+      const openIds =
+        !finalisation.ok && finalisation.reason === "window_open"
+          ? finalisation.state.kind === "pending_rollover" ||
+            finalisation.state.kind === "pending_win"
+            ? finalisation.state.open_entry_ids
+            : []
+          : [];
+      pendingNames = openIds
+        .map(
+          (id) =>
+            entries.find((e) => e.id === id)?.participant?.name ?? "an entry"
+        )
+        .sort((a, b) => a.localeCompare(b, "en"));
     }
   } catch (e) {
     console.error("results load failed:", e);
@@ -102,6 +159,93 @@ export default async function ResultsPage() {
         <p className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           {loadError}
         </p>
+      )}
+
+      {competition && finalisation && !finalisation.ok &&
+        finalisation.reason === "window_open" && (
+          <section className="mt-6 rounded-md border border-amber-300 bg-amber-50 p-5">
+            <h2 className="font-semibold text-amber-900">
+              {finalisation.state.kind === "pending_rollover"
+                ? "Everyone is out — but this competition has NOT rolled over"
+                : "Last entry standing — but not the winner yet"}
+            </h2>
+            <p className="mt-2 text-sm text-amber-900">
+              {finalisation.state.kind === "pending_rollover" ? (
+                <>
+                  The round is settled and nobody survived it. Per the rules the
+                  pot does <strong>not</strong> roll over until the buy-back
+                  window closes with nobody coming back.
+                </>
+              ) : (
+                <>
+                  The round is settled and one entry is left, but an eliminated
+                  entry can still pay to come back — so nobody is crowned yet.
+                </>
+              )}{" "}
+              The window shuts at the next round&apos;s deadline,{" "}
+              <strong>{windowFormat.format(new Date(finalisation.closesAt))}</strong>.
+            </p>
+            <p className="mt-2 text-sm text-amber-900">
+              {pendingNames.length > 0 ? (
+                <>
+                  Can still buy back in for £10:{" "}
+                  <strong>{pendingNames.join(", ")}</strong>. Take the money and
+                  record it on{" "}
+                  <Link
+                    href="/admin/entrants"
+                    className="font-semibold underline"
+                  >
+                    Entrants
+                  </Link>{" "}
+                  before the deadline.
+                </>
+              ) : (
+                <>Nobody is eligible to buy back.</>
+              )}
+            </p>
+            <p className="mt-2 text-sm text-amber-900">
+              Come back here after the deadline to finish it off — nothing is
+              decided until then, and nothing needs doing before it.
+            </p>
+          </section>
+        )}
+
+      {competition && finalisation?.ok && (
+        <section className="mt-6 rounded-md border border-blue-300 bg-blue-50 p-5">
+          <h2 className="font-semibold text-blue-900">
+            {finalisation.state.kind === "rollover"
+              ? "Ready to roll over"
+              : "Ready to crown the winner"}
+          </h2>
+          <p className="mt-2 mb-4 text-sm text-blue-900">
+            {finalisation.state.kind === "rollover" ? (
+              <>
+                Everyone is out and the buy-back window has closed with nobody
+                coming back. Confirming rolls this competition over — the pot
+                carries into the next one.
+              </>
+            ) : (
+              <>
+                One entry is left, the round is settled and every buy-back window
+                has closed. Confirming ends the competition and pays the pot.
+              </>
+            )}
+          </p>
+          <ActionForm
+            action={finaliseCompetition}
+            submitLabel={
+              finalisation.state.kind === "rollover"
+                ? "Confirm rollover"
+                : "Crown the winner"
+            }
+            pendingLabel="Finishing…"
+            confirm={
+              finalisation.state.kind === "rollover"
+                ? "Roll this competition over? This ends it — the pot carries into the next one."
+                : "End the competition and crown the winner? This cannot be undone here."
+            }
+          />
+        </section>
       )}
 
       {!competition ? (

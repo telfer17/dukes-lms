@@ -326,3 +326,316 @@ export function isWinPendingUnplayedFixtures(
   if (end.kind !== "won") return false;
   return end.entry_ids.every((id) => survivedViaUnplayed.has(id));
 }
+
+// ---------------------------------------------------------------------------
+// Rule 5 — buy-back
+// ---------------------------------------------------------------------------
+//
+// docs/LMS-RULES.md § Buy-back. An entry eliminated EARLY may be bought back
+// into the SAME competition for another £10 — once, for the immediately
+// following round only, confirmed before that round's pick deadline.
+//
+// Everything here is per ENTRY. The offer belongs to the entry, not to the
+// person holding it: someone with two eliminated entries has two independent
+// windows and pays twice, and buying one back says nothing about the other.
+// That falls out of the shape below rather than being enforced anywhere — no
+// function in this section ever looks at another entry.
+//
+// What is deliberately ABSENT is any notion of the team pool. A buy-back
+// restores an entry's LIFE, not its list of used teams: the team that put it
+// out, and everything it used before that, stay unavailable. The way that rule
+// is kept is that nothing here reads or writes pick history at all — the entry
+// comes back and availableTeams() answers exactly as it did the week before.
+
+/**
+ * The last round an elimination can still buy back from. Out in 1, 2 or 3 →
+ * one window. Out in 4 or later → nothing; a round-3 elimination is the last
+ * that can ever buy back, and it returns for round 4.
+ *
+ * Mirrored as a backstop by lms_buyback_max_elim_round() in db/buyback.sql.
+ * This is the source of truth.
+ */
+export const BUYBACK_MAX_ELIMINATED_ROUND = 3;
+
+/** The round a buy-back would be FOR, as the eligibility check needs it. */
+export type BuybackRound = {
+  round_number: number;
+  /** ISO instant — the authoritative deadline, from the database. */
+  deadline: string;
+  status: "pending" | "locked" | "settled";
+};
+
+export type BuybackCandidate = {
+  entry_id: string;
+  participant_id: string;
+  status: EntryStatus;
+  /** The round this entry went OUT in. Null when it is not out. */
+  eliminated_round_number: number | null;
+  /** True when a buy-back has already been recorded for THAT elimination. */
+  bought_back: boolean;
+};
+
+export type BuybackRefusal =
+  | "not_eliminated"
+  | "unknown_elimination_round"
+  | "eliminated_too_late"
+  | "already_bought_back"
+  | "no_next_round"
+  | "wrong_round"
+  | "window_closed";
+
+export type BuybackVerdict =
+  | { eligible: true; for_round_number: number; closes_at: string }
+  | { eligible: false; code: BuybackRefusal; reason: string };
+
+/**
+ * May this entry be bought back into `round`, right now?
+ *
+ * Pure: state in, verdict out. Every clause is one sentence of the rule —
+ *
+ *   eliminated at all           an active entry has nothing to buy back
+ *   in round 1, 2 or 3          eligibility is by the round it went OUT in
+ *   not already bought back     one buy-back per elimination
+ *   the round after that one    N → N+1 and nothing else. This is the clause
+ *                               that refuses "out in R1, sit out R2, rejoin in
+ *                               R3": the offer is a single time-boxed window,
+ *                               not a standing option to return whenever.
+ *   before that round's deadline    miss it and the entry is permanently out
+ *
+ * `round` is the round being bought INTO — the caller looks it up; this decides
+ * whether it is the right one. Passing undefined means the competition has no
+ * such round, which is not eligibility either.
+ */
+export function buybackEligibility(
+  candidate: BuybackCandidate,
+  round: BuybackRound | undefined,
+  now: Date = new Date()
+): BuybackVerdict {
+  const refuse = (code: BuybackRefusal, reason: string): BuybackVerdict => ({
+    eligible: false,
+    code,
+    reason,
+  });
+
+  if (candidate.status !== "eliminated") {
+    return refuse(
+      "not_eliminated",
+      candidate.status === "active"
+        ? "This entry is still in — there is nothing to buy back."
+        : "This entry is not eliminated."
+    );
+  }
+
+  const out = candidate.eliminated_round_number;
+  if (out === null) {
+    return refuse(
+      "unknown_elimination_round",
+      "We don't know which round this entry went out in, so its buy-back window can't be worked out."
+    );
+  }
+
+  if (out > BUYBACK_MAX_ELIMINATED_ROUND) {
+    return refuse(
+      "eliminated_too_late",
+      `Out in round ${out} — buy-backs are only for entries eliminated in rounds 1 to ${BUYBACK_MAX_ELIMINATED_ROUND}.`
+    );
+  }
+
+  if (candidate.bought_back) {
+    return refuse(
+      "already_bought_back",
+      "This entry has already used its buy-back for that elimination."
+    );
+  }
+
+  if (!round) {
+    return refuse(
+      "no_next_round",
+      `There is no round ${out + 1} in this competition to buy back into.`
+    );
+  }
+
+  if (round.round_number !== out + 1) {
+    return refuse(
+      "wrong_round",
+      `Out in round ${out}, so the only buy-back is for round ${out + 1} — not round ${round.round_number}. A round can't be skipped and rejoined later.`
+    );
+  }
+
+  // A deadline that will not parse is not "no deadline" — same reasoning as
+  // validatePick(): `now >= NaN` is false, which would read as a window that is
+  // still open and let a buy-back through on a round whose deadline nobody can
+  // determine. Fail closed.
+  const closesAt = Date.parse(round.deadline);
+  if (Number.isNaN(closesAt)) {
+    return refuse(
+      "window_closed",
+      `Round ${round.round_number}'s deadline can't be read, so the buy-back window can't be confirmed open.`
+    );
+  }
+
+  // Settled or locked is past the deadline by construction. Checked as well as
+  // the clock so the refusal never rests on the clock alone.
+  if (round.status !== "pending" || now.getTime() >= closesAt) {
+    return refuse(
+      "window_closed",
+      `The buy-back window closed at round ${round.round_number}'s deadline — this entry is out for good.`
+    );
+  }
+
+  return {
+    eligible: true,
+    for_round_number: round.round_number,
+    closes_at: round.deadline,
+  };
+}
+
+/** An eligibility that is still live: a buy-back that could still land. */
+export type OpenBuybackWindow = {
+  entry_id: string;
+  participant_id: string;
+  /** The round it would come back for. */
+  for_round_number: number;
+  /** ISO instant the window shuts — that round's pick deadline. */
+  closes_at: string;
+};
+
+/**
+ * Every candidate whose window is still open, right now.
+ *
+ * `roundByNumber` is a lookup rather than a list so the caller decides where
+ * rounds come from, and this stays free of any I/O.
+ */
+export function openBuybackWindows(
+  candidates: BuybackCandidate[],
+  roundByNumber: (roundNumber: number) => BuybackRound | undefined,
+  now: Date = new Date()
+): OpenBuybackWindow[] {
+  const open: OpenBuybackWindow[] = [];
+  for (const candidate of candidates) {
+    const target =
+      candidate.eliminated_round_number === null
+        ? undefined
+        : roundByNumber(candidate.eliminated_round_number + 1);
+    const verdict = buybackEligibility(candidate, target, now);
+    if (!verdict.eligible) continue;
+    open.push({
+      entry_id: candidate.entry_id,
+      participant_id: candidate.participant_id,
+      for_round_number: verdict.for_round_number,
+      closes_at: verdict.closes_at,
+    });
+  }
+  return open;
+}
+
+/**
+ * What the COMPETITION does now — the end state once buy-back is taken into
+ * account.
+ *
+ *   continue         two or more owners still standing. Never pends: a round
+ *                    that leaves the competition running is simply running.
+ *   won              one owner left AND no window can still revive anybody.
+ *   pending_win      one owner left, but a window is open. NOT a win yet:
+ *                    being last standing before eliminated players' windows
+ *                    close is not winning (docs/LMS-RULES.md § End states).
+ *   pending_rollover nobody left, but a window is open. NOT a rollover yet.
+ *   rollover         nobody left and no window open. Confirmed.
+ *
+ * The two pending states are the same fact wearing different clothes: the round
+ * is settled and the competition's END is waiting on a clock. Both carry
+ * `window_closes` — the LATEST instant any open window shuts, because the
+ * decision cannot be taken until every one of them has — and that is what
+ * lms_finalise_competition() (db/buyback.sql) is made to prove has passed.
+ *
+ * `openWindows` blocks a win WHOEVER holds the eliminated entry, including the
+ * prospective winner themselves. Winner-takes-all by PERSON means reviving
+ * one's own entry cannot change who wins, so this is stricter than the rule
+ * strictly requires — but crowning ends the competition, and ending it while a
+ * paid-for offer is still live is the one mistake with no undo. Waiting costs a
+ * week; crowning early costs somebody their buy-back.
+ *
+ * RETURNING ENTRIES ARE NOT SURVIVORS. An entry that is active because it BOUGHT
+ * BACK has not come through the round — it has paid to play the next one. So
+ * while any returning entry is on the field, the competition CONTINUES, and
+ * nothing is decided:
+ *
+ *   a round wipes out the field and one entry buys back → pending_rollover
+ *   becomes continue, not a win. Nobody survived; somebody returned, and they
+ *   have a round to play before anything is read off.
+ *
+ * Without this the difference is invisible — one active entry looks the same
+ * however it got there — and a competition that was rescued from a rollover
+ * would instead crown the person who rescued it, for a round they never played.
+ *
+ * `returningEntryIds` is therefore relative to a REFERENCE ROUND: entries whose
+ * buy-back is for a round LATER than the one whose end state is being read. An
+ * entry that bought back for the round just settled played it like anybody else
+ * and is an ordinary survivor.
+ */
+export type CompetitionState =
+  | { kind: "continue"; entry_ids: string[] }
+  | { kind: "won"; participant_id: string; entry_ids: string[] }
+  | {
+      kind: "pending_win";
+      participant_id: string;
+      entry_ids: string[];
+      window_closes: string;
+      open_entry_ids: string[];
+    }
+  | { kind: "pending_rollover"; window_closes: string; open_entry_ids: string[] }
+  | { kind: "rollover" };
+
+/** The latest instant any of these windows shuts. */
+function latestClose(windows: OpenBuybackWindow[]): string {
+  return windows.reduce((latest, w) =>
+    Date.parse(w.closes_at) > Date.parse(latest.closes_at) ? w : latest
+  ).closes_at;
+}
+
+export function resolveCompetitionState(
+  entries: EntryRecord[],
+  openWindows: OpenBuybackWindow[],
+  returningEntryIds: string[] = []
+): CompetitionState {
+  const active = entries.filter((e) => e.status === "active");
+
+  // Somebody is back and has not played yet — there is nothing to read off,
+  // whatever the rest of the field looks like.
+  const returning = new Set(returningEntryIds);
+  if (active.some((e) => returning.has(e.id))) {
+    return { kind: "continue", entry_ids: active.map((e) => e.id) };
+  }
+
+  const end = resolveEndState(entries);
+
+  // No window open → buy-back changes nothing, and the answer is the one the
+  // competition always gave. resolveEndState stays the core rule; this wraps it.
+  if (openWindows.length === 0) {
+    return end.kind === "won"
+      ? { kind: "won", participant_id: end.participant_id, entry_ids: end.entry_ids }
+      : end.kind === "rollover"
+        ? { kind: "rollover" }
+        : { kind: "continue", entry_ids: end.entry_ids };
+  }
+
+  const window_closes = latestClose(openWindows);
+  const open_entry_ids = openWindows.map((w) => w.entry_id);
+
+  if (end.kind === "rollover") {
+    return { kind: "pending_rollover", window_closes, open_entry_ids };
+  }
+  if (end.kind === "won") {
+    return {
+      kind: "pending_win",
+      participant_id: end.participant_id,
+      entry_ids: end.entry_ids,
+      window_closes,
+      open_entry_ids,
+    };
+  }
+  // Two or more owners are still in. An open window can only add another
+  // entry to a competition that is already carrying on, so there is nothing
+  // to wait for.
+  return { kind: "continue", entry_ids: end.entry_ids };
+}

@@ -1,7 +1,7 @@
 // The two groups, their order, and the words for them.
 //
-// /board and /grid both render this split, so it is tested once here rather
-// than twice by eye. The ranking is the part worth pinning: an eliminated row's
+// The leaderboard renders this split in two places at once — the headline
+// count and the tables — so it is tested here rather than by eye. The ranking is the part worth pinning: an eliminated row's
 // only remaining information is HOW FAR IT GOT, and sorting that column
 // alphabetically throws it away.
 

@@ -681,3 +681,185 @@ describe("settle then resolve", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// The last two standing, across a Saturday and a Sunday
+//
+// The owner's scenario, and the one that decides a real competition: two
+// entries left, their games on different days. Every branch of it is here at
+// engine level, and again at plan level (tests/settlement-plan.test.ts) and
+// against a real Postgres (tests/db/settlement.db.test.ts), because the answer
+// has to be the same at all three.
+//
+// P1 always picks Aston Villa, who lose at Arsenal on the Saturday.
+// P2 always picks Chelsea, whose Sunday game is what varies.
+// ---------------------------------------------------------------------------
+
+describe("two entries left, Saturday and Sunday", () => {
+  const ENTRIES = [entry("e1", "p1"), entry("e2", "p2")];
+  const PICKS = [pick("e1", "Aston Villa"), pick("e2", "Chelsea")];
+
+  /** Saturday is always the same: Arsenal beat Aston Villa, so P1 is out. */
+  const saturday = fixture("Arsenal", "Aston Villa", { result: "home" });
+
+  const sunday = (overrides: Partial<Fixture>) =>
+    fixture("Chelsea", "Everton", overrides);
+
+  it("A — both lose: nobody is crowned, the competition rolls over", () => {
+    const settled = settleRound(
+      ENTRIES,
+      PICKS,
+      [saturday, sunday({ result: "away" })], // Everton win at Chelsea
+      1
+    );
+
+    expect(settled.unsettled).toEqual([]);
+    expect(settled.entries.map((e) => e.status)).toEqual([
+      "eliminated",
+      "eliminated",
+    ]);
+    // The whole point: the survivor of the Saturday is NOT the winner, because
+    // there is no survivor of the Sunday either.
+    expect(resolveEndState(settled.entries)).toEqual({ kind: "rollover" });
+  });
+
+  it("B — Sunday has no result: the round is UNSETTLED, and P2 is not a winner", () => {
+    const settled = settleRound(
+      ENTRIES,
+      PICKS,
+      [saturday, sunday({ status: "scheduled", result: null })],
+      1
+    );
+
+    expect(settled.unsettled).toEqual(["e2"]);
+    expect(settled.outcomes).toEqual([
+      { entry_id: "e1", team_id: idOf("Aston Villa"), outcome: "eliminated" },
+      { entry_id: "e2", team_id: idOf("Chelsea"), outcome: "pending" },
+    ]);
+    // P2's status is untouched — a fixture with no result eliminates nobody and
+    // crowns nobody.
+    expect(settled.entries[1].status).toBe("active");
+  });
+
+  it("B — and this is exactly why `unsettled` is a REFUSAL, not a detail", () => {
+    // resolveEndState only counts who is still active. Handed a half-settled
+    // round it will happily report P2 as the winner — P1 is out, P2 is active,
+    // one owner left — on a game that has not kicked off.
+    //
+    // That is not a bug in resolveEndState: it is a pure function answering the
+    // question it was asked. It is the reason nothing may call it until
+    // `unsettled` is empty, which is enforced in lib/settlement-plan.ts (reason
+    // 'unsettled') and again in lms_settle_round (code 'missing_results'). This
+    // test pins the hazard so that neither guard can be removed as redundant.
+    const settled = settleRound(
+      ENTRIES,
+      PICKS,
+      [saturday, sunday({ status: "scheduled", result: null })],
+      1
+    );
+
+    expect(settled.unsettled).not.toEqual([]);
+    expect(resolveEndState(settled.entries)).toEqual({
+      kind: "won",
+      participant_id: "p2",
+      entry_ids: ["e2"],
+    });
+  });
+
+  it("C — Sunday postponed: P2 survives, but the win is PROVISIONAL", () => {
+    const settled = settleRound(
+      ENTRIES,
+      PICKS,
+      [saturday, sunday({ status: "postponed", result: null })],
+      1
+    );
+
+    expect(settled.unsettled).toEqual([]);
+    expect(settled.survivedViaUnplayed).toEqual(new Set(["e2"]));
+
+    const end = resolveEndState(settled.entries);
+    expect(end).toEqual({
+      kind: "won",
+      participant_id: "p2",
+      entry_ids: ["e2"],
+    });
+    // Decided, but not declarable: the only thing keeping P2 in is a game that
+    // was never played, so the round locks instead of settling.
+    expect(isWinPendingUnplayedFixtures(end, settled.survivedViaUnplayed)).toBe(
+      true
+    );
+  });
+
+  it("C — once the postponed game is played and lost, it is a rollover", () => {
+    // The TRANSITION, not just the destination: settle the same round twice,
+    // first with the game still postponed and then with the real result. Only
+    // the pair proves the lock is temporary — asserting the rollover alone is
+    // indistinguishable from test A, where the game was played all along and no
+    // provisional lock ever existed.
+
+    // 1. Postponed. P2 survives on it, so the win is provisional and the round
+    //    LOCKS rather than settling.
+    const locked = settleRound(
+      ENTRIES,
+      PICKS,
+      [saturday, sunday({ status: "postponed", result: null })],
+      1
+    );
+    const provisionalEnd = resolveEndState(locked.entries);
+    expect(provisionalEnd).toEqual({
+      kind: "won",
+      participant_id: "p2",
+      entry_ids: ["e2"],
+    });
+    expect(
+      isWinPendingUnplayedFixtures(provisionalEnd, locked.survivedViaUnplayed)
+    ).toBe(true);
+    // Nobody has been eliminated by the postponement itself.
+    expect(locked.entries[1].status).toBe("active");
+
+    // 2. The game is played and Chelsea lose it. Re-settling the SAME round
+    //    from the SAME starting entries — which is what a re-settle does, the
+    //    lock having left P2 active — now takes P2 out too.
+    const resettled = settleRound(
+      locked.entries,
+      PICKS,
+      [saturday, sunday({ result: "away" })],
+      1
+    );
+
+    expect(resettled.survivedViaUnplayed.size).toBe(0);
+    expect(resettled.entries.map((e) => e.status)).toEqual([
+      "eliminated",
+      "eliminated",
+    ]);
+
+    const finalEnd = resolveEndState(resettled.entries);
+    expect(finalEnd).toEqual({ kind: "rollover" });
+    // And the provisional flag is gone with it — there is no win left to hold.
+    expect(
+      isWinPendingUnplayedFixtures(finalEnd, resettled.survivedViaUnplayed)
+    ).toBe(false);
+  });
+
+  it("D — P2 wins on the Sunday: crowned outright, nothing provisional", () => {
+    const settled = settleRound(
+      ENTRIES,
+      PICKS,
+      [saturday, sunday({ result: "home" })],
+      1
+    );
+
+    expect(settled.unsettled).toEqual([]);
+    expect(settled.survivedViaUnplayed.size).toBe(0);
+
+    const end = resolveEndState(settled.entries);
+    expect(end).toEqual({
+      kind: "won",
+      participant_id: "p2",
+      entry_ids: ["e2"],
+    });
+    expect(isWinPendingUnplayedFixtures(end, settled.survivedViaUnplayed)).toBe(
+      false
+    );
+  });
+});

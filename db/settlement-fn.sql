@@ -98,9 +98,15 @@ comment on function lms_lock_key() is
 --     auto_assign:           [{entry_id, team_id}]    -- rows to create
 --     pick_outcomes:         [{entry_id, outcome}]    -- survived | eliminated
 --     eliminate_entry_ids:   [entry_id]
---     end: { kind: continue|won|rollover|provisional,
+--     end: { kind: continue|won|rollover|pending|provisional,
 --            participant_id, winner_entry_ids: [entry_id] }
 --   }
+--
+-- 'pending' is the buy-back end kind: the ROUND settles like any other, but the
+-- COMPETITION is left alone because an eliminated entry can still pay to come
+-- back before the next round's deadline (docs/LMS-RULES.md § Buy-back). What
+-- happens to the competition is decided later, by lms_finalise_competition()
+-- in db/buyback.sql, once that window has closed.
 --
 -- Result shape:
 --   { ok: true,  code: 'settled'|'locked_provisional', eliminated, survivors }
@@ -125,6 +131,7 @@ declare
   v_actual   jsonb;
 
   v_active_count    int;
+  v_missing         jsonb;
   v_outcome_count   int;
   v_eliminated      int;
   v_survivors       int;
@@ -139,7 +146,7 @@ begin
      or v_end_kind is null then
     return jsonb_build_object('ok', false, 'code', 'malformed_plan');
   end if;
-  if v_end_kind not in ('continue', 'won', 'rollover', 'provisional') then
+  if v_end_kind not in ('continue', 'won', 'rollover', 'pending', 'provisional') then
     return jsonb_build_object('ok', false, 'code', 'malformed_plan');
   end if;
 
@@ -260,7 +267,66 @@ begin
 
   select jsonb_array_length(v_actual) into v_active_count;
 
-  -- 3d. the plan must be COMPLETE: one settled outcome for every active entry,
+  -- 3d. every fixture that is about to decide somebody must actually have a
+  -- result.
+  --
+  -- The engine refuses a half-resulted matchday long before a plan exists
+  -- (lib/settlement-plan.ts, reason 'unsettled'), so in production this never
+  -- fires. It is here because that refusal lives in the CALLER, and the caller
+  -- is not what this function trusts. A plan that asserts an outcome for a game
+  -- nobody has played is otherwise indistinguishable from a real one — the
+  -- fixture fingerprint matches (a scheduled fixture is honestly reported as
+  -- scheduled), and the completeness count below matches too — so it would
+  -- settle the round and crown somebody on a match that has not kicked off.
+  -- That is the Saturday-night hazard: two players left, one loses on Saturday,
+  -- and the other's Sunday game is still to come.
+  --
+  -- This is the one place that reads a fixture's status to decide a refusal,
+  -- and it is deliberately not a rule: it asks whether the INPUT exists, never
+  -- what the input means. Who survives is still decided only in lib/lms.ts.
+  --
+  -- Scope is exactly the set the engine settles: the picks of entries that are
+  -- still active, plus the teams this plan is about to auto-assign. An
+  -- eliminated entry's pick from an earlier settle of a locked round is not
+  -- re-examined.
+  select coalesce(jsonb_agg(distinct label order by label), '[]'::jsonb)
+    into v_missing
+    from (
+      select case
+               when f.id is null
+                 then t.name || ' (no matchday ' || v_matchday || ' fixture)'
+               else home_t.name || ' v ' || away_t.name
+             end as label
+        from (
+          select p.team_id
+            from picks p
+            join entries en on en.id = p.entry_id
+           where p.round_id = rnd.id
+             and en.competition_id = comp.id
+             and en.status = 'active'
+          union
+          select (a->>'team_id')::smallint as team_id
+            from jsonb_array_elements(coalesce(p_plan->'auto_assign', '[]'::jsonb)) a
+        ) picked
+        join teams t on t.id = picked.team_id
+        left join fixtures f
+          on f.matchday = v_matchday
+         and (f.home_team_id = picked.team_id or f.away_team_id = picked.team_id)
+        left join teams home_t on home_t.id = f.home_team_id
+        left join teams away_t on away_t.id = f.away_team_id
+       where f.id is null
+          or f.status = 'scheduled'
+          or (f.status = 'played' and f.result is null)
+    ) missing;
+
+  if v_missing <> '[]'::jsonb then
+    return jsonb_build_object(
+      'ok', false, 'code', 'missing_results',
+      'detail', jsonb_build_object('fixtures', v_missing)
+    );
+  end if;
+
+  -- 3e. the plan must be COMPLETE: one settled outcome for every active entry,
   -- and none of them 'pending'. This is a structural check, not a re-derivation
   -- of the rules — it catches a plan built from a half-resulted matchday
   -- without teaching this function how the rules work.
@@ -342,6 +408,14 @@ begin
     );
   end if;
 
+  -- 'continue' and 'pending' both fall through to the round-settled write at
+  -- the bottom without touching `competitions` — which is the entire content of
+  -- the buy-back rule at this layer. A round that wipes out the field no longer
+  -- rolls the competition over here: it settles, and the competition stays
+  -- active and PENDING until the buy-back window closes with nobody having paid
+  -- (lms_finalise_competition, db/buyback.sql). Rolling over here would take
+  -- that decision a week early, and 'rolled_over' is not a state anything
+  -- reverses.
   if v_end_kind = 'rollover' then
     update competitions set status = 'rolled_over' where id = comp.id;
 
