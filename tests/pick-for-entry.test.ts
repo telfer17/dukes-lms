@@ -121,6 +121,26 @@ describe("setPickForEntry read failures", () => {
     expect(h.upsert).toHaveBeenCalled();
   });
 
+  // docs/LMS-RULES.md § Editing after the lock. Correcting a randomly-assigned
+  // pick to the player's real choice must STRIP the auto marker: the pick is a
+  // person's choice now, and the board says "auto" only where the site actually
+  // drew the team. The upsert overwrites the existing row for (entry, round),
+  // so this flag is what decides whether the marker survives the edit.
+  it("writes auto_assigned = false, so editing an assigned pick clears the marker", async () => {
+    await setPickForEntry(null, form(good));
+
+    expect(h.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entry_id: "e1",
+        round_id: "r1",
+        team_id: 1,
+        auto_assigned: false,
+        outcome: "pending",
+      }),
+      { onConflict: "entry_id,round_id" }
+    );
+  });
+
   // One case per read, because the try/catch has to cover the whole sequence
   // and not just the first await — a throw four reads deep is the likelier one.
   const reads = [

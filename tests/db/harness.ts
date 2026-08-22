@@ -144,6 +144,7 @@ export class TestDb {
       readFileSync(join(repoRoot, "db", "settlement-fn.sql"), "utf8")
     );
     await this.sql(readFileSync(join(repoRoot, "db", "buyback.sql"), "utf8"));
+    await this.sql(readFileSync(join(repoRoot, "db", "lock-round.sql"), "utf8"));
   }
 
   /** Wipe everything except the 20-team reference seed. */
@@ -271,6 +272,19 @@ export class TestDb {
       amountPence,
       paid,
     ]);
+  }
+
+  async lock(plan: unknown): Promise<Record<string, unknown>> {
+    return this.value("select lms_lock_round($1::jsonb) as r", [
+      JSON.stringify(plan),
+    ]);
+  }
+
+  async roundRow(roundId: string): Promise<Row> {
+    return this.one(
+      "select round_number, status, locked_at from rounds where id = $1",
+      [roundId]
+    );
   }
 
   async finalise(plan: unknown): Promise<Record<string, unknown>> {
@@ -442,6 +456,75 @@ export async function planFromDatabase(
       entry_id: b.entry_id as string,
       eliminated_round_number: Number(b.eliminated_round_number),
       for_round_number: Number(b.for_round_number),
+    })),
+  });
+}
+
+/**
+ * The lock plan, read from the database the same way the admin action reads it
+ * — same builder, same engine, same seed. See planFromDatabase.
+ */
+export async function lockPlanFromDatabase(
+  db: TestDb,
+  competitionId: string,
+  roundId: string
+) {
+  const { buildLockPlan } = await import("@/lib/settlement-plan");
+
+  const round = await db.one(
+    "select id, round_number, matchday from rounds where id = $1",
+    [roundId]
+  );
+  const rounds = await db.sql(
+    "select id, round_number from rounds where competition_id = $1",
+    [competitionId]
+  );
+  const teams = await db.sql("select id, name from teams order by name");
+  const fixtures = await db.sql(
+    "select id, matchday, home_team_id, away_team_id, status, result from fixtures where matchday = $1 order by kickoff",
+    [round.matchday]
+  );
+  const entries = await db.sql(
+    `select e.id, e.participant_id, e.status, p.name
+       from entries e join participants p on p.id = e.participant_id
+      where e.competition_id = $1`,
+    [competitionId]
+  );
+  const picks = await db.sql(
+    "select entry_id, round_id, team_id from picks where competition_id = $1",
+    [competitionId]
+  );
+
+  return buildLockPlan({
+    competitionId,
+    round: {
+      id: round.id as string,
+      round_number: Number(round.round_number),
+      matchday: Number(round.matchday),
+    },
+    roundNumberById: new Map(
+      rounds.map((r) => [r.id as string, Number(r.round_number)])
+    ),
+    teams: teams.map((t) => ({ id: Number(t.id), name: t.name as string })),
+    fixtures: fixtures.map((f) => ({
+      id: Number(f.id),
+      matchday: Number(f.matchday),
+      home_team_id: Number(f.home_team_id),
+      away_team_id: Number(f.away_team_id),
+      status: f.status as "scheduled" | "played" | "postponed" | "abandoned",
+      result: f.result as "home" | "away" | "draw" | null,
+    })),
+    entries: entries.map((e) => ({
+      id: e.id as string,
+      participant_id: e.participant_id as string,
+      status: e.status as "active" | "eliminated" | "winner",
+      label: e.name as string,
+      eliminated_round_number: null,
+    })),
+    picks: picks.map((p) => ({
+      entry_id: p.entry_id as string,
+      round_id: p.round_id as string,
+      team_id: Number(p.team_id),
     })),
   });
 }

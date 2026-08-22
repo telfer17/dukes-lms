@@ -4,6 +4,7 @@ import AdminEntryRow, {
   type CurrentPick,
   type PickControl,
 } from "@/components/admin/AdminEntryRow";
+import LockRoundButton from "@/components/admin/LockRoundButton";
 import MarkAllPaidButton from "@/components/admin/MarkAllPaidButton";
 import {
   groupEntries,
@@ -55,6 +56,17 @@ const deadlineFormat = new Intl.DateTimeFormat("en-GB", {
   weekday: "long",
   day: "numeric",
   month: "long",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+// Shorter — this one sits in small print under the Lock button.
+const lockedFormat = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  weekday: "short",
+  day: "numeric",
+  month: "short",
   hour: "2-digit",
   minute: "2-digit",
   hour12: false,
@@ -415,6 +427,26 @@ export default async function EntrantsPage() {
             {open ? "Picks lock" : "Deadline was"}{" "}
             {deadlineFormat.format(new Date(round.deadline))}
           </p>
+
+          {/* Always here, before and after the deadline — the organiser should
+              never have to go looking for it, and the deadline it prints is
+              this round's own (the matchday's first kickoff), which moves every
+              week. Hidden only when the picks read failed, because a blank
+              count of 0 derived from an unknown pick state would offer to lock
+              a round while telling the organiser nothing is missing. */}
+          {roundKnown && (
+            <LockRoundButton
+              roundNumber={round.round_number}
+              deadlineLabel={deadlineFormat.format(new Date(round.deadline))}
+              deadlinePassed={!open}
+              blanks={toPick}
+              lockedAtLabel={
+                round.locked_at
+                  ? lockedFormat.format(new Date(round.locked_at))
+                  : null
+              }
+            />
+          )}
         </div>
       )}
 

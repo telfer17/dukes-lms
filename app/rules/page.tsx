@@ -145,8 +145,17 @@ export default function RulesPage() {
         </p>
         <p>
           Picks go through the organiser. Get yours to your club contact before
-          the deadline — by text, in person, however suits — and they enter it
-          for you. There is no pick page to log into and nothing to lose.
+          the deadline — by WhatsApp, in person, however suits — and they enter
+          it for you. There is no pick page to log into and nothing to lose.
+        </p>
+        <p>
+          The deadline moves every round, because it is that matchday&apos;s
+          first kick-off — a round with a Friday-night game locks on the Friday
+          night. After it passes the organiser locks the round, which is when{" "}
+          <a href="#missed" className="text-blue-600 hover:underline">
+            missed picks
+          </a>{" "}
+          are dealt with.
         </p>
       </Section>
 
@@ -174,19 +183,40 @@ export default function RulesPage() {
 
       <Section id="missed" title="If you miss the deadline">
         <p>
-          Missing a pick is <strong>not</strong>{" "}an elimination. If the deadline
-          passes and you haven&apos;t picked, a team is assigned to you: the
-          first one <strong>alphabetically</strong> that you have not already
-          used <em>and</em> that is playing in that matchday.
+          Missing a pick is <strong>not</strong>{" "}an elimination. Once the
+          deadline has passed the organiser <strong>locks the round</strong>, and
+          anyone without a pick is given a team{" "}
+          <strong>at random</strong> — drawn from the teams you have{" "}
+          <em>not</em> already used that are playing in that matchday.
         </p>
         <p>
           You then live or die by that team exactly as if you had picked it
-          yourself, and it counts as used. An auto-assigned pick is shown as
+          yourself, and it counts as used. A randomly-assigned pick is shown as
           &ldquo;auto&rdquo; on the picks grid and on the board.
         </p>
         <p>
+          The draw is <strong>fixed in advance</strong>: it is worked out from
+          your entry and the round, so the team you get is the same no matter
+          who locks the round, when they lock it, or how many times they press
+          it. Nobody can re-roll it, and it can be checked afterwards.
+        </p>
+        <p>
+          If the organiser gets your pick after the deadline but before the round
+          is settled, they can still <strong>enter it over the assigned
+          team</strong> — it then counts as your own pick, and the
+          &ldquo;auto&rdquo; marker comes off.
+        </p>
+        <p>
+          One catch worth knowing: if you have already used{" "}
+          <em>every</em> team playing that matchday, the draw falls back to a
+          team you have not used that <strong>isn&apos;t playing</strong>. A team
+          with no game can&apos;t win, so that round takes you out. That is the
+          cost of not getting a pick in — the safest way to avoid it is to send
+          one.
+        </p>
+        <p>
           If you hold more than one entry and miss both, each entry gets its own
-          team worked out from its own history — so the two may well be
+          draw from its own list of unused teams — so the two will usually be
           different teams.
         </p>
       </Section>
@@ -249,8 +279,8 @@ export default function RulesPage() {
           — and every team you had used before that —{" "}
           stays unavailable for the rest of the competition. You pick up exactly
           where you left off, and from then on you are an ordinary entry again:
-          same deadline, same no-repeat rule, and the same auto-assigned team if
-          you then miss the deadline.
+          same deadline, same no-repeat rule, and the same random team if you
+          then miss the deadline.
         </p>
         <p>
           If you hold more than one entry, each eliminated entry has its own

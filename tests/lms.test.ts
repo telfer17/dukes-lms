@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  autoAssignSeed,
   autoAssignTeam,
   availableTeams,
   fixtureForTeam,
@@ -279,123 +280,188 @@ describe("availableTeams", () => {
 // Rule 3 — auto-assign on a missed pick
 // ---------------------------------------------------------------------------
 
-describe("autoAssignTeam", () => {
-  it("picks the first alphabetically among teams PLAYING this matchday", () => {
-    // Arsenal + Aston Villa are alphabetically first overall but are NOT
-    // playing — the answer must be Bournemouth, not Arsenal.
-    const fixtures = [
-      fixture("Chelsea", "Bournemouth"),
-      fixture("Everton", "Fulham"),
-    ];
-    expect(autoAssignTeam([], TEAMS, fixtures, 1)?.name).toBe("Bournemouth");
+describe("autoAssignTeam — the seeded random draw", () => {
+  const MATCHDAY = [
+    fixture("Chelsea", "Bournemouth"),
+    fixture("Everton", "Fulham"),
+    fixture("Arsenal", "Aston Villa"),
+    fixture("Liverpool", "Brentford"),
+    fixture("Leeds United", "Hull City"),
+  ];
+  const PLAYING = [
+    "Chelsea", "Bournemouth", "Everton", "Fulham", "Arsenal",
+    "Aston Villa", "Liverpool", "Brentford", "Leeds United", "Hull City",
+  ];
+
+  const draw = (history: number[], seed: string, fixtures = MATCHDAY) =>
+    autoAssignTeam(history, TEAMS, fixtures, 1, seed);
+
+  it("is STABLE: the same entry and round always draw the same team", () => {
+    const seed = autoAssignSeed("entry-abc", "round-1");
+    const first = draw([], seed);
+    expect(first).not.toBeNull();
+    // Called again, and again, and from a differently-ordered team list: the
+    // answer cannot move. This is what lets the organiser press Lock twice, or
+    // never, without changing the competition.
+    for (let i = 0; i < 20; i++) {
+      expect(draw([], seed)?.id).toBe(first!.id);
+    }
+    expect(
+      autoAssignTeam([], [...TEAMS].reverse(), MATCHDAY, 1, seed)?.id
+    ).toBe(first!.id);
+    expect(
+      autoAssignTeam([], TEAMS, [...MATCHDAY].reverse(), 1, seed)?.id
+    ).toBe(first!.id);
   });
 
-  it("sorts by NAME, not by the order teams arrive in", () => {
-    // Manchester United sits before Arsenal in TEAMS, and Tottenham before
-    // Aston Villa. Anything relying on input order picks the wrong team here.
-    expect(
-      autoAssignTeam([], TEAMS, [fixture("Manchester United", "Arsenal")], 1)?.name
-    ).toBe("Arsenal");
-    expect(
-      autoAssignTeam([], TEAMS, [fixture("Tottenham Hotspur", "Aston Villa")], 1)
-        ?.name
-    ).toBe("Aston Villa");
-    expect(
-      autoAssignTeam([], TEAMS, [
-        fixture("Manchester United", "Liverpool"),
-        fixture("Newcastle United", "Brentford"),
-      ], 1)?.name
-    ).toBe("Brentford");
+  it("is a DIFFERENT draw per entry and per round", () => {
+    // Not a guarantee that any two differ — a 10-team pool collides sometimes —
+    // but across a field the draws must not be one team.
+    const perEntry = new Set(
+      Array.from({ length: 40 }, (_, i) =>
+        draw([], autoAssignSeed(`entry-${i}`, "round-1"))?.name
+      )
+    );
+    expect(perEntry.size).toBeGreaterThan(1);
+
+    const perRound = new Set(
+      Array.from({ length: 40 }, (_, i) =>
+        draw([], autoAssignSeed("entry-abc", `round-${i}`))?.name
+      )
+    );
+    expect(perRound.size).toBeGreaterThan(1);
   });
 
-  it("only considers teams playing THIS matchday when a season is passed in", () => {
-    // Bournemouth is alphabetically first overall but plays matchday 2.
-    const fixtures = [
+  it("SPREADS across the pool — no team takes an unfair share", () => {
+    // The hazard this pins is a weak hash: entry ids are uuids differing in a
+    // character or two, and a poor one maps them all to the same bucket. 300
+    // realistic-looking ids over a 10-team pool.
+    const counts = new Map<string, number>();
+    for (let i = 0; i < 300; i++) {
+      const id = `3f2a9c${String(i).padStart(4, "0")}-1c4d-4e8a-9b7f-0a1b2c3d4e5f`;
+      const team = draw([], autoAssignSeed(id, "round-1"))!.name;
+      counts.set(team, (counts.get(team) ?? 0) + 1);
+    }
+    // Every playing team gets used…
+    expect(counts.size).toBe(PLAYING.length);
+    // …and nobody takes more than double a fair share (30 of 300).
+    for (const [, n] of counts) expect(n).toBeLessThan(60);
+  });
+
+  it("only ever draws a team PLAYING this matchday", () => {
+    for (let i = 0; i < 100; i++) {
+      const team = draw([], autoAssignSeed(`entry-${i}`, "r1"))!;
+      expect(PLAYING).toContain(team.name);
+    }
+  });
+
+  it("only considers THIS matchday when a season is passed in", () => {
+    const season = [
       fixture("Everton", "Fulham", { matchday: 1 }),
       fixture("Chelsea", "Bournemouth", { matchday: 2 }),
     ];
-    expect(autoAssignTeam([], TEAMS, fixtures, 1)?.name).toBe("Everton");
-    expect(autoAssignTeam([], TEAMS, fixtures, 2)?.name).toBe("Bournemouth");
+    for (let i = 0; i < 30; i++) {
+      const seed = autoAssignSeed(`e-${i}`, "r1");
+      expect(["Everton", "Fulham"]).toContain(
+        autoAssignTeam([], TEAMS, season, 1, seed)!.name
+      );
+      expect(["Chelsea", "Bournemouth"]).toContain(
+        autoAssignTeam([], TEAMS, season, 2, seed)!.name
+      );
+    }
   });
 
-  it("breaks a name tie deterministically on team id", () => {
-    // Names equal under sensitivity "base" — the lower id must win regardless
-    // of the order they arrive in.
-    const tied: Team[] = [
-      { id: 9, name: "Ryhope Colliery" },
-      { id: 4, name: "ryhope colliery" },
-    ];
-    const md = [
-      {
-        id: 1,
-        matchday: 1,
-        home_team_id: 9,
-        away_team_id: 4,
-        status: "scheduled" as const,
-        result: null,
-      },
-    ];
-    expect(autoAssignTeam([], tied, md, 1)?.id).toBe(4);
-    expect(autoAssignTeam([], [...tied].reverse(), md, 1)?.id).toBe(4);
+  it("NEVER draws a team the entry has already used", () => {
+    const used = ["Chelsea", "Bournemouth", "Everton", "Fulham", "Arsenal"];
+    const history = used.map(idOf);
+    for (let i = 0; i < 100; i++) {
+      const team = draw(history, autoAssignSeed(`entry-${i}`, "r1"))!;
+      expect(used).not.toContain(team.name);
+      expect(PLAYING).toContain(team.name);
+    }
   });
 
-  it("skips teams the entry has already used", () => {
-    const fixtures = [
-      fixture("Chelsea", "Bournemouth"),
-      fixture("Everton", "Fulham"),
-    ];
-    // Bournemouth used → next alphabetical playing team is Chelsea.
-    expect(
-      autoAssignTeam([idOf("Bournemouth")], TEAMS, fixtures, 1)?.name
-    ).toBe("Chelsea");
+  it("is INDEPENDENT per entry — two entries of one person draw separately", () => {
+    // Same person, two entries, different histories AND different seeds.
+    const one = draw([], autoAssignSeed("smith-1", "r1"))!;
+    const two = draw([idOf("Chelsea")], autoAssignSeed("smith-2", "r1"))!;
+    expect(two.name).not.toBe("Chelsea");
+    expect(one.id).toBeGreaterThan(0);
   });
 
-  it("skips both used AND not-playing teams together", () => {
-    const fixtures = [
-      fixture("Chelsea", "Bournemouth"),
-      fixture("Everton", "Fulham"),
-    ];
-    expect(
-      autoAssignTeam(
-        [idOf("Bournemouth"), idOf("Chelsea"), idOf("Everton")],
-        TEAMS,
-        fixtures
-      , 1)?.name
-    ).toBe("Fulham");
+  // ---- decision 1: the not-playing fallback --------------------------------
+
+  it("falls back to an unused team that is NOT playing, rather than skipping", () => {
+    // Every team playing this matchday has been used. The entry must still get
+    // a team — one with no game — and go out at settlement.
+    const history = PLAYING.map(idOf);
+    const team = draw(history, autoAssignSeed("entry-x", "r1"));
+
+    expect(team).not.toBeNull();
+    expect(PLAYING).not.toContain(team!.name);
+    expect(history).not.toContain(team!.id);
   });
 
-  it("is INDEPENDENT per entry — different histories, different assignments", () => {
-    const fixtures = [
-      fixture("Chelsea", "Bournemouth"),
-      fixture("Everton", "Fulham"),
-    ];
-    const entryA = autoAssignTeam([], TEAMS, fixtures, 1);
-    const entryB = autoAssignTeam(
-      [idOf("Bournemouth"), idOf("Chelsea")],
-      TEAMS,
-      fixtures,
-      1
+  it("the fallback triggers ONLY when no unused playing team is left", () => {
+    // One playing team still unused → it must be drawn, every time, whatever
+    // the seed. The fallback is a last resort, not an alternative.
+    const allButOne = PLAYING.filter((n) => n !== "Hull City").map(idOf);
+    for (let i = 0; i < 50; i++) {
+      expect(draw(allButOne, autoAssignSeed(`e-${i}`, "r1"))!.name).toBe(
+        "Hull City"
+      );
+    }
+  });
+
+  it("the fallback is seeded too — stable, and spread", () => {
+    const history = PLAYING.map(idOf);
+    const seed = autoAssignSeed("entry-x", "r1");
+    const first = draw(history, seed)!;
+    expect(draw(history, seed)!.id).toBe(first.id);
+
+    const spread = new Set(
+      Array.from({ length: 40 }, (_, i) =>
+        draw(history, autoAssignSeed(`e-${i}`, "r1"))!.name
+      )
     );
-    expect(entryA?.name).toBe("Bournemouth");
-    expect(entryB?.name).toBe("Everton");
-    expect(entryA?.id).not.toBe(entryB?.id);
+    expect(spread.size).toBeGreaterThan(1);
   });
+
+  it("with no fixtures at all, still assigns — from the whole unused pool", () => {
+    // Not a case the app reaches (settlement refuses a matchday with no
+    // fixtures long before this), but the rule is "never skip an entry".
+    const team = autoAssignTeam([], TEAMS, [], 1, autoAssignSeed("e", "r"));
+    expect(team).not.toBeNull();
+  });
+
+  // ---- the 20-team pool reset ---------------------------------------------
 
   it("uses the post-reset pool, so a used team is assignable again after 20", () => {
-    const fixtures = [fixture("Chelsea", "Bournemouth")];
     const fullCycle = TEAMS.map((t) => t.id);
-    expect(autoAssignTeam(fullCycle, TEAMS, fixtures, 1)?.name).toBe("Bournemouth");
+    const team = draw(fullCycle, autoAssignSeed("entry-x", "r1"))!;
+    // Everything is available again, so the draw is from the playing ten.
+    expect(PLAYING).toContain(team.name);
   });
 
-  it("returns null when every playing team is already used", () => {
-    const fixtures = [fixture("Chelsea", "Bournemouth")];
-    expect(
-      autoAssignTeam([idOf("Chelsea"), idOf("Bournemouth")], TEAMS, fixtures, 1)
-    ).toBeNull();
+  it("respects the pool reset mid-cycle: 21 picks means ONE team used", () => {
+    const history = [...TEAMS.map((t) => t.id), idOf("Chelsea")];
+    for (let i = 0; i < 60; i++) {
+      expect(draw(history, autoAssignSeed(`e-${i}`, "r1"))!.name).not.toBe(
+        "Chelsea"
+      );
+    }
   });
 
-  it("returns null when there are no fixtures at all", () => {
-    expect(autoAssignTeam([], TEAMS, [], 1)).toBeNull();
+  it("returns null only when there are no teams at all", () => {
+    expect(autoAssignTeam([], [], MATCHDAY, 1, "seed")).toBeNull();
+  });
+});
+
+describe("autoAssignSeed", () => {
+  it("is built from the entry and the round, and nothing else", () => {
+    expect(autoAssignSeed("e1", "r1")).toBe(autoAssignSeed("e1", "r1"));
+    expect(autoAssignSeed("e1", "r1")).not.toBe(autoAssignSeed("e1", "r2"));
+    expect(autoAssignSeed("e1", "r1")).not.toBe(autoAssignSeed("e2", "r1"));
   });
 });
 
@@ -505,6 +571,72 @@ describe("settleRound", () => {
     const fixtures = [fixture("Arsenal", "Chelsea", { result: "away" })];
     settleRound(entries, [pick("e1", "Arsenal")], fixtures, 1);
     expect(entries[0].status).toBe("active");
+  });
+});
+
+describe("settleRound — a team with no game", () => {
+  // The consequence of decision 1 (docs/LMS-RULES.md): the auto-assign fallback
+  // can hand an entry a team that is not playing this matchday. No game, no
+  // win — the entry is out, and settlement must NOT wait for a result that is
+  // never coming.
+  const MATCHDAY = [
+    fixture("Chelsea", "Bournemouth", { result: "home" }),
+    fixture("Everton", "Fulham", { result: "away" }),
+  ];
+
+  it("settles as ELIMINATED, not pending", () => {
+    const settled = settleRound(
+      [entry("e1", "p1")],
+      [pick("e1", "Arsenal")], // Arsenal are not in this matchday
+      MATCHDAY,
+      1
+    );
+
+    expect(settled.outcomes).toEqual([
+      { entry_id: "e1", team_id: idOf("Arsenal"), outcome: "eliminated" },
+    ]);
+    // The whole point: nothing is left unsettled, so the round can settle.
+    expect(settled.unsettled).toEqual([]);
+    expect(settled.entries[0].status).toBe("eliminated");
+  });
+
+  it("does not touch entries whose team DID play", () => {
+    const settled = settleRound(
+      [entry("e1", "p1"), entry("e2", "p2")],
+      [pick("e1", "Arsenal"), pick("e2", "Chelsea")],
+      MATCHDAY,
+      1
+    );
+    expect(settled.entries.map((e) => e.status)).toEqual([
+      "eliminated",
+      "active",
+    ]);
+  });
+
+  // The guard that stops this rule eating the competition.
+  it("stays PENDING when the matchday has no fixtures at all", () => {
+    // No fixtures loaded is not "nobody is playing" — it is "we do not know
+    // yet". Eliminating the entire field because a seed script had not run is
+    // the one failure this must never have, so unknown stays unsettled and
+    // settlement refuses.
+    const settled = settleRound(
+      [entry("e1", "p1"), entry("e2", "p2")],
+      [pick("e1", "Arsenal"), pick("e2", "Chelsea")],
+      [],
+      1
+    );
+    expect(settled.unsettled).toEqual(["e1", "e2"]);
+    expect(settled.entries.map((e) => e.status)).toEqual(["active", "active"]);
+  });
+
+  it("stays PENDING when the fixtures loaded are for another matchday", () => {
+    const settled = settleRound(
+      [entry("e1", "p1")],
+      [pick("e1", "Arsenal")],
+      [fixture("Chelsea", "Bournemouth", { matchday: 2, result: "home" })],
+      1
+    );
+    expect(settled.unsettled).toEqual(["e1"]);
   });
 });
 

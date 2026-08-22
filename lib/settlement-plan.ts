@@ -12,6 +12,7 @@
 // — it arranges the engine's answers into the shape the transaction applies.
 
 import {
+  autoAssignSeed,
   autoAssignTeam,
   buybackEligibility,
   fixtureForTeam,
@@ -354,11 +355,16 @@ export function buildSettlementPlan(input: BuildPlanInput): PlanOutcome {
 
   for (const entry of activeEntries) {
     if (pickedEntryIds.has(entry.id)) continue;
+    // The settlement BACKSTOP (docs/LMS-RULES.md § Backstop): a round nobody
+    // locked still gets its blanks filled, and — because the draw is seeded on
+    // (entry, round) — with the IDENTICAL team the lock would have written.
+    // Locking early and not locking at all reach the same competition.
     const team = autoAssignTeam(
       historyFor(entry.id, picks, input.roundNumberById),
       teams,
       fixtures,
-      round.matchday
+      round.matchday,
+      autoAssignSeed(entry.id, round.id)
     );
     if (!team) {
       stuck.push(entry.label);
@@ -614,4 +620,100 @@ export function buildFinalisationPlan(
   };
 
   return { ok: true, plan, state };
+}
+
+// ---------------------------------------------------------------------------
+// Locking a round
+// ---------------------------------------------------------------------------
+
+/**
+ * Exactly the JSON lms_lock_round() takes (db/lock-round.sql).
+ *
+ * There are no `expected_*` fingerprints here, and that is not an omission. The
+ * settlement plan needs them because it DECIDES things — who is out, who won —
+ * from state that must not have moved. This plan decides nothing: every team in
+ * it is a seeded draw that would come out the same however many times it is
+ * computed, and the function only writes into blanks. A pick that lands between
+ * this plan and its application simply wins, which is the behaviour the rules
+ * ask for (locking and editing are independent, in either order).
+ */
+export type LockPlan = {
+  competition_id: string;
+  round_id: string;
+  assign: { entry_id: string; team_id: TeamId }[];
+};
+
+export type BuildLockInput = {
+  competitionId: string;
+  round: PlanRound;
+  /** Round id → round_number, so pick history can be put in order. */
+  roundNumberById: Map<string, number>;
+  teams: Team[];
+  /** Every fixture of `round.matchday`. */
+  fixtures: Fixture[];
+  /** Every entry in the competition, whatever its status. */
+  entries: PlanEntry[];
+  /** Every pick in the competition, all rounds. */
+  picks: PlanPick[];
+};
+
+export type LockOutcome = {
+  plan: LockPlan;
+  /**
+   * Entries that were blank and could not be drawn for AT ALL — only possible
+   * with an empty team list, because the 20-team pool reset means an entry
+   * always has something unused. Reported, never fatal: one undrawable entry
+   * must not stop the other forty being locked.
+   */
+  stuck: string[];
+  /** How many entries already had a pick and were left alone. */
+  alreadyPicked: number;
+};
+
+/**
+ * Work out what locking this round would assign.
+ *
+ * Pure, and — because every draw is seeded on (entry, round) — CONSTANT: build
+ * it now, in an hour, or from the settlement backstop instead, and the same
+ * entries get the same teams. That is what lets the organiser lock late, lock
+ * twice, or not lock at all without changing the competition.
+ */
+export function buildLockPlan(input: BuildLockInput): LockOutcome {
+  const { competitionId, round, teams, fixtures, entries, picks } = input;
+
+  const pickedThisRound = new Set(
+    picks.filter((p) => p.round_id === round.id).map((p) => p.entry_id)
+  );
+
+  const assign: { entry_id: string; team_id: TeamId }[] = [];
+  const stuck: string[] = [];
+  let alreadyPicked = 0;
+
+  for (const entry of entries) {
+    if (entry.status !== "active") continue;
+    if (pickedThisRound.has(entry.id)) {
+      alreadyPicked++;
+      continue;
+    }
+
+    const team = autoAssignTeam(
+      historyFor(entry.id, picks, input.roundNumberById),
+      teams,
+      fixtures,
+      round.matchday,
+      autoAssignSeed(entry.id, round.id)
+    );
+
+    if (!team) {
+      stuck.push(entry.label);
+      continue;
+    }
+    assign.push({ entry_id: entry.id, team_id: team.id });
+  }
+
+  return {
+    plan: { competition_id: competitionId, round_id: round.id, assign },
+    stuck,
+    alreadyPicked,
+  };
 }

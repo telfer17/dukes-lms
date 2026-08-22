@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildFinalisationPlan,
+  buildLockPlan,
   buildSettlementPlan,
   type PlanEntry,
   type PlanRoundInfo,
@@ -143,7 +144,7 @@ describe("buildSettlementPlan", () => {
     });
   });
 
-  it("skips teams the entry used in earlier rounds when auto-assigning", () => {
+  it("never auto-assigns a team the entry used in an earlier round", () => {
     const built = build({
       roundNumberById: new Map([
         ["r0", 0],
@@ -155,8 +156,25 @@ describe("buildSettlementPlan", () => {
       ],
     });
     if (!built.ok) throw new Error(built.reason);
-    // Arsenal is out, so the next playing team alphabetically: Aston Villa.
-    expect(built.plan.auto_assign).toEqual([{ entry_id: "e1", team_id: 2 }]);
+
+    expect(built.plan.auto_assign).toHaveLength(1);
+    const assigned = built.plan.auto_assign[0];
+    expect(assigned.entry_id).toBe("e1");
+    expect(assigned.team_id).not.toBe(1); // Arsenal is used
+    // Drawn from the teams actually playing this matchday.
+    expect([2, 3, 4, 5, 6]).toContain(assigned.team_id);
+  });
+
+  it("draws the SAME team however many times the plan is built", () => {
+    // The property the lock relies on: settlement's backstop and the lock draw
+    // from one seed, so an unlocked round settles exactly as a locked one would.
+    const first = build({ picks: [{ entry_id: "e2", round_id: "r1", team_id: 3 }] });
+    if (!first.ok) throw new Error(first.reason);
+    for (let i = 0; i < 5; i++) {
+      const again = build({ picks: [{ entry_id: "e2", round_id: "r1", team_id: 3 }] });
+      if (!again.ok) throw new Error(again.reason);
+      expect(again.plan.auto_assign).toEqual(first.plan.auto_assign);
+    }
   });
 
   it("marks a win resting only on a postponement as PROVISIONAL", () => {
@@ -238,9 +256,14 @@ describe("buildSettlementPlan", () => {
     });
   });
 
-  it("refuses — by name — when an entry has no team left to assign", () => {
+  it("assigns a NOT-PLAYING team rather than skipping an entry with none left", () => {
+    // Only one fixture this matchday, and Ann has used both teams in it. The old
+    // rule refused the whole settlement here ('auto_assign_stuck'). Decision 1
+    // in docs/LMS-RULES.md replaces that: she is given an unused team anyway,
+    // even though it has no game — and a team with no game cannot win, so she
+    // goes out. Not sending a pick in has a consequence; it does not stop the
+    // competition.
     const built = build({
-      // Only one fixture, and this entry has used both teams in it.
       fixtures: [fixture(10, 1, 2, "played", "home")],
       entries: [{ ...entry("e1", "p1"), label: "Ann" }],
       roundNumberById: new Map([
@@ -252,11 +275,18 @@ describe("buildSettlementPlan", () => {
         { entry_id: "e1", round_id: "r0", team_id: 2 },
       ],
     });
-    expect(built).toEqual({
-      ok: false,
-      reason: "auto_assign_stuck",
-      stuck: ["Ann"],
-    });
+    if (!built.ok) throw new Error(built.reason);
+
+    expect(built.plan.auto_assign).toHaveLength(1);
+    const assigned = built.plan.auto_assign[0].team_id;
+    expect([1, 2]).not.toContain(assigned); // not a used team
+    expect([3, 4, 5, 6]).toContain(assigned); // and not playing this matchday
+
+    // Settled, not left pending: she is out.
+    expect(built.plan.pick_outcomes).toEqual([
+      { entry_id: "e1", outcome: "eliminated" },
+    ]);
+    expect(built.plan.eliminate_entry_ids).toEqual(["e1"]);
   });
 
   it("refuses when nobody is left to settle", () => {
@@ -773,5 +803,100 @@ describe("buildSettlementPlan — a round-4 settlement is final on the spot", ()
       participant_id: "p1",
       winner_entry_ids: ["e1"],
     });
+  });
+});
+
+describe("buildLockPlan", () => {
+  const lockInput = (
+    overrides: Partial<Parameters<typeof buildLockPlan>[0]> = {}
+  ) => ({
+    competitionId: "c1",
+    round: ROUND,
+    roundNumberById: ROUND_NUMBERS,
+    teams: TEAMS,
+    fixtures: [
+      fixture(10, 1, 2, "played", "home"),
+      fixture(11, 3, 4, "played", "draw"),
+      fixture(12, 5, 6, "postponed"),
+    ],
+    entries: [entry("e1", "p1"), entry("e2", "p2"), entry("e3", "p3")],
+    picks: [] as Parameters<typeof buildLockPlan>[0]["picks"],
+    ...overrides,
+  });
+
+  it("covers ONLY the entries with no pick", () => {
+    const built = buildLockPlan(
+      lockInput({
+        picks: [
+          { entry_id: "e1", round_id: "r1", team_id: 1 },
+          { entry_id: "e3", round_id: "r1", team_id: 3 },
+        ],
+      })
+    );
+
+    // e1 and e3 are already in and must not appear at all — not with their own
+    // team, not with a drawn one. The database refuses to overwrite a pick
+    // anyway, but a plan that names them is a plan that is lying about what it
+    // intends to do.
+    expect(built.plan.assign.map((a) => a.entry_id)).toEqual(["e2"]);
+    expect(built.alreadyPicked).toBe(2);
+    expect(built.stuck).toEqual([]);
+  });
+
+  it("ignores a pick from a DIFFERENT round", () => {
+    const built = buildLockPlan(
+      lockInput({
+        roundNumberById: new Map([
+          ["r0", 0],
+          ["r1", 1],
+        ]),
+        picks: [{ entry_id: "e1", round_id: "r0", team_id: 1 }],
+      })
+    );
+    // e1 picked last week, not this one — it is still a blank for this round.
+    expect(built.plan.assign.map((a) => a.entry_id)).toEqual(["e1", "e2", "e3"]);
+    expect(built.alreadyPicked).toBe(0);
+    // …and last week's team is not drawn again.
+    expect(built.plan.assign.find((a) => a.entry_id === "e1")!.team_id).not.toBe(1);
+  });
+
+  it("skips entries that are out", () => {
+    const built = buildLockPlan(
+      lockInput({
+        entries: [entry("e1", "p1"), entry("e2", "p2", "eliminated")],
+      })
+    );
+    expect(built.plan.assign.map((a) => a.entry_id)).toEqual(["e1"]);
+  });
+
+  it("is CONSTANT — the same plan however many times it is built", () => {
+    const first = buildLockPlan(lockInput());
+    for (let i = 0; i < 5; i++) {
+      expect(buildLockPlan(lockInput()).plan).toEqual(first.plan);
+    }
+  });
+
+  it("matches what settlement's backstop would assign, entry for entry", () => {
+    // The guarantee the rules make: locking and not locking reach the same
+    // picks. Same world, two builders, identical answers.
+    const locked = buildLockPlan(lockInput());
+    const settled = build({ picks: [] });
+    if (!settled.ok) throw new Error(settled.reason);
+
+    // The settlement plan covers the two entries it knows about; compare those.
+    for (const assignment of settled.plan.auto_assign) {
+      expect(locked.plan.assign).toContainEqual(assignment);
+    }
+  });
+
+  it("reports an undrawable entry instead of failing the whole lock", () => {
+    const built = buildLockPlan(
+      lockInput({
+        teams: [],
+        entries: [{ ...entry("e1", "p1"), label: "Ann" }],
+      })
+    );
+    expect(built.stuck).toEqual(["Ann"]);
+    expect(built.plan.assign).toEqual([]);
   });
 });

@@ -31,8 +31,17 @@ re-deriving behaviour.
 
 - A "round" = one Premier League matchday (Matchday 1, 2, 3, …).
 - Each player picks exactly one team from that matchday's fixtures.
+- **Players do not use the site.** Picks go to the organiser — in practice by
+  WhatsApp — and the **organiser or a club admin enters them on the site**. The
+  site is an organiser's tool; there is no player-facing pick screen and nothing
+  for a player to log into.
 - Picks lock at the round deadline — the **first kickoff of that matchday**.
-  No changes after the deadline.
+  The deadline therefore **varies from round to round**: it is not a fixed day
+  or time, it is whenever that matchday's earliest game kicks off. A round
+  starting on the Friday night locks on the Friday night.
+- No changes after the deadline — see [Locking a round](#locking-a-round) for
+  what the organiser does then, and for the one correction that is still allowed
+  afterwards.
 
 ## Survival rules
 
@@ -40,13 +49,108 @@ re-deriving behaviour.
 - Team **draws or loses** → eliminated.
 - A team may only be picked **once per competition**. Once a player has used all
   20 teams, their pool resets and all teams become available to them again.
-- **Missed pick** (no selection by the deadline) → auto-assign the first team
-  **alphabetically** that the player has not already used *and* that is playing
-  in that matchday. This is the agreed gentle handling — a missed pick is **not**
-  automatic elimination.
+- **Missed pick** (no selection by the deadline) → a team is **assigned at
+  random** from the teams that entry has **not already used** *and* that are
+  **playing in that matchday**. This is the agreed gentle handling — a missed
+  pick is **not** automatic elimination. It happens when the organiser
+  [locks the round](#locking-a-round). If the entry has no unused team playing
+  that matchday, it is assigned an unused team that is **not** playing, and goes
+  out when the round settles — see [Locking a round](#locking-a-round).
 - Auto-assign applies **per entry**. Someone holding two entries who misses both
-  deadlines gets a team auto-assigned for each one, worked out separately from
-  that entry's own used-team history (so the two may well be different teams).
+  deadlines gets a team assigned for each one, drawn separately from that entry's
+  own unused teams (so the two will usually be different teams).
+
+## Locking a round
+
+Once the deadline has passed, the organiser presses **Lock round**. That is the
+moment missed picks are dealt with, and it is a deliberate press rather than
+something that happens quietly on a timer.
+
+- **What locking does.** Every entry that still has **no pick** is assigned one
+  **at random**, drawn from that entry's **not-yet-used** teams that are
+  **playing that matchday**. Entries that already have a pick are untouched.
+- **The draw is seeded, not live.** The randomness is **deterministically seeded
+  from the entry and the round**, so the same entry in the same round always
+  draws the same team. It does not matter **who** presses Lock, or **when** they
+  press it, or how many times — the answer is fixed before anyone asks. Nobody
+  can re-roll an assignment they do not like, and the result can be re-derived
+  and checked afterwards.
+- **It is written permanently.** A locked assignment is a real pick on the
+  record, exactly like one a player sent in. It counts as **used** for that
+  entry's team pool, win or lose.
+- **Per entry**, drawn from that entry's own unused teams — two entries of the
+  same person are drawn separately.
+- **Nobody is ever skipped.** If the entry has no unused team **playing** that
+  matchday, it is still assigned one **at random from its unused teams**, even
+  though that team has no game. A team with no game cannot win, so that entry is
+  **eliminated when the round settles**. That is the intended consequence of not
+  sending a pick in, not a fault: the site never skips an entry and never
+  refuses to lock over one.
+  - Once an entry has used **all 20** teams the ordinary **pool reset** applies
+    (see [Survival rules](#survival-rules)) and every team is available to it
+    again — so "no unused teams at all" cannot arise.
+- **Locking is idempotent.** Locking a round that is already locked does
+  **nothing** to entries that already have a pick — assigned or manual. Only
+  **blanks** are filled, and a filled pick is permanent. Pressing Lock twice, or
+  by two different people, cannot change a single thing that was already there.
+- **A round with no blanks may still be locked**, and that is a normal thing to
+  do: nothing is assigned, and the round is marked locked. It is the "everyone
+  is in" signal.
+
+### The Lock button
+
+- It is **visible to the organiser and club admins at all times**, and it
+  **shows that round's actual deadline** next to it, because the deadline moves
+  every week.
+- Pressing it **before** the deadline **warns** that players can still be
+  sending picks in and **asks for confirmation**. It is allowed — sometimes the
+  organiser knows everybody is in — but it is never the quiet default.
+- Pressing it **after** the deadline is the **normal path**, and asks nothing.
+
+### Editing after the lock
+
+A round being locked does **not** freeze the picks for the organiser, and
+**locking and editing are independent** — neither has to come first. The
+organiser can enter a late pick and then lock, or lock and then correct a pick.
+Both orders end in the same place.
+
+- The organiser or a club admin may **edit any entry's pick** — assigned or
+  manual — **up until the round is settled**. This exists for the ordinary
+  case where a pick arrived on time and did not get entered: a WhatsApp message
+  read too late, a name missed on the list.
+- **Editing an assigned pick to the player's real choice removes the
+  "auto-assigned" marker.** It becomes an ordinary manual pick, because that is
+  what it is. The **"auto" marker stays only on picks that were genuinely drawn
+  at random** — so what the board shows is the truth about how each pick came to
+  be there.
+- Once the round is **settled**, picks are final. Settlement is what makes
+  eliminations real, and a pick changed after it would contradict a result
+  people have already been told.
+
+### What "locked" means here
+
+**Locked is about PICKS, not about the result.** It records that the blanks have
+been filled and the round's picks are complete. It is deliberately **separate
+from the round's settlement state** — pending, settled, and the provisional-win
+lock that holds a round open when a win rests on a postponed game
+(see [End states](#end-states)) — because those answer a different question:
+what has happened to the *players*. A round can be locked and unsettled, and
+locking never moves a round towards being settled.
+
+### Backstop: settling an unlocked round
+
+If a round somehow reaches **settlement** without having been locked, settlement
+**fills the remaining blanks itself**, using the **same seeded-random-unused
+rule**. Locking early changes nothing about the outcome — it is the same draw,
+taken at the same seed — so an unlocked round can never stall settlement, and it
+can never produce a different result from a locked one. Locking is when it
+normally happens; it is not the only thing that can make it happen.
+
+This is a **guarantee, not a coincidence**: the team an entry gets is fixed by
+the seed, so the backstop assigns the **identical team** the lock would have.
+Whether the organiser locked the round, locked it twice, or never locked it at
+all, the entry ends up with the same team — which is what makes locking a
+convenience rather than a thing the result depends on.
 
 ## Postponed / abandoned matches
 
@@ -95,11 +199,11 @@ round gets a **fresh** window for that new elimination.
   any other active entry: same deadline, same no-repeat rule against its
   persisted used-team history.
 - **Auto-assign applies.** If the owner then makes no pick by round N+1's
-  deadline, the standard [missed-pick handling](#survival-rules) applies — first
-  team **alphabetically** that the entry has not already used and that is playing
-  in that matchday, worked out from that entry's **persisted** used-team history.
-  Buying back **is** the commitment; a missed pick afterwards is treated exactly
-  like any other active entry's, not as a forfeit of the buy-back.
+  deadline, the standard [missed-pick handling](#locking-a-round) applies — a
+  team drawn at random from the ones that entry has not already used and that are
+  playing in that matchday, worked out from that entry's **persisted** used-team
+  history. Buying back **is** the commitment; a missed pick afterwards is treated
+  exactly like any other active entry's, not as a forfeit of the buy-back.
 
 ### Buy-back and rollover
 
