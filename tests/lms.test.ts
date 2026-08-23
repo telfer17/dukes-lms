@@ -3,6 +3,7 @@ import {
   autoAssignSeed,
   autoAssignTeam,
   availableTeams,
+  isMatchdayComplete,
   fixtureForTeam,
   isUnplayed,
   isWinPendingUnplayedFixtures,
@@ -574,6 +575,52 @@ describe("settleRound", () => {
   });
 });
 
+describe("isMatchdayComplete", () => {
+  // Ten fixtures, twenty clubs — a full Premier League matchday.
+  const FULL = [
+    fixture("Manchester United", "Arsenal"),
+    fixture("Tottenham Hotspur", "Aston Villa"),
+    fixture("Liverpool", "Bournemouth"),
+    fixture("Newcastle United", "Brentford"),
+    fixture("Chelsea", "Brighton & Hove Albion"),
+    fixture("Everton", "Coventry City"),
+    fixture("Fulham", "Crystal Palace"),
+    fixture("Leeds United", "Hull City"),
+    fixture("Manchester City", "Ipswich Town"),
+    fixture("Nottingham Forest", "Sunderland"),
+  ];
+
+  it("is true only when every club in the league has a game", () => {
+    expect(isMatchdayComplete(FULL, 1, TEAMS.length)).toBe(true);
+    expect(isMatchdayComplete(FULL.slice(0, 9), 1, TEAMS.length)).toBe(false);
+    expect(isMatchdayComplete([], 1, TEAMS.length)).toBe(false);
+  });
+
+  // EQUALITY, not "nearly all". Pairwise fixtures mean a 20-club league can
+  // only ever be missing an even number of clubs, so an odd league is the
+  // shape that tells "== 20" apart from ">= 19" — which is the point: the test
+  // is that the list ACCOUNTS for everybody, not that it is close.
+  it("does not accept a league with one club unaccounted for", () => {
+    expect(isMatchdayComplete(FULL.slice(0, 9), 1, 19)).toBe(false);
+    expect(isMatchdayComplete(FULL.slice(0, 9), 1, 18)).toBe(true);
+  });
+
+  it("is false when the league is empty — nothing to be complete about", () => {
+    // Guards the degenerate read. With a teams table that came back empty,
+    // "every club has a game" is vacuously true and EVERY pick would look like
+    // a team with no game — i.e. the whole competition eliminated on a failed
+    // lookup. Zero clubs is unknown, not complete.
+    expect(isMatchdayComplete(FULL, 1, 0)).toBe(false);
+    expect(isMatchdayComplete([], 1, 0)).toBe(false);
+  });
+
+  it("counts only the matchday asked about", () => {
+    const nextWeek = FULL.map((f) => ({ ...f, matchday: 2 }));
+    expect(isMatchdayComplete(nextWeek, 1, TEAMS.length)).toBe(false);
+    expect(isMatchdayComplete(nextWeek, 2, TEAMS.length)).toBe(true);
+  });
+});
+
 describe("settleRound — a team with no game", () => {
   // The consequence of decision 1 (docs/LMS-RULES.md): the auto-assign fallback
   // can hand an entry a team that is not playing this matchday. No game, no
@@ -589,7 +636,8 @@ describe("settleRound — a team with no game", () => {
       [entry("e1", "p1")],
       [pick("e1", "Arsenal")], // Arsenal are not in this matchday
       MATCHDAY,
-      1
+      1,
+      true // the matchday is complete: Arsenal genuinely has no game
     );
 
     expect(settled.outcomes).toEqual([
@@ -605,7 +653,8 @@ describe("settleRound — a team with no game", () => {
       [entry("e1", "p1"), entry("e2", "p2")],
       [pick("e1", "Arsenal"), pick("e2", "Chelsea")],
       MATCHDAY,
-      1
+      1,
+      true
     );
     expect(settled.entries.map((e) => e.status)).toEqual([
       "eliminated",
@@ -613,7 +662,73 @@ describe("settleRound — a team with no game", () => {
     ]);
   });
 
-  // The guard that stops this rule eating the competition.
+  // ---- the guards that stop this rule eating the competition ------------
+
+  // THE one that matters. A matchday still being loaded looks exactly like a
+  // matchday where most of the league has no game, and the difference is
+  // whether people are eliminated on fixtures nobody has entered yet.
+  it("stays PENDING when the matchday is only PARTLY loaded", () => {
+    // Three of the five games in. Ann picked a team whose fixture is one of the
+    // two missing — she must NOT be settled at all.
+    const partial = [
+      fixture("Chelsea", "Bournemouth", { result: "home" }),
+      fixture("Everton", "Fulham", { result: "away" }),
+      fixture("Arsenal", "Aston Villa", { result: "draw" }),
+    ];
+    const settled = settleRound(
+      [entry("e1", "p1"), entry("e2", "p2")],
+      [pick("e1", "Liverpool"), pick("e2", "Chelsea")],
+      partial,
+      1,
+      isMatchdayComplete(partial, 1, TEAMS.length)
+    );
+
+    expect(settled.unsettled).toEqual(["e1"]);
+    expect(settled.entries[0].status).toBe("active");
+    // The half that IS loaded still settles normally — refusing is about the
+    // gap, not about the whole round.
+    expect(settled.outcomes).toContainEqual({
+      entry_id: "e2",
+      team_id: idOf("Chelsea"),
+      outcome: "survived",
+    });
+  });
+
+  it("eliminates on a no-game team only when the matchday is COMPLETE", () => {
+    // Every club has a fixture: ten games, twenty teams. Now a team with no
+    // game genuinely has no game.
+    const complete = [
+      fixture("Manchester United", "Arsenal", { result: "home" }),
+      fixture("Tottenham Hotspur", "Aston Villa", { result: "home" }),
+      fixture("Liverpool", "Bournemouth", { result: "home" }),
+      fixture("Newcastle United", "Brentford", { result: "home" }),
+      fixture("Chelsea", "Brighton & Hove Albion", { result: "home" }),
+      fixture("Everton", "Coventry City", { result: "home" }),
+      fixture("Fulham", "Crystal Palace", { result: "home" }),
+      fixture("Leeds United", "Hull City", { result: "home" }),
+      fixture("Manchester City", "Ipswich Town", { result: "home" }),
+      fixture("Nottingham Forest", "Sunderland", { result: "home" }),
+    ];
+    expect(isMatchdayComplete(complete, 1, TEAMS.length)).toBe(true);
+
+    // Drop ONE game, and the same pick stops being an elimination.
+    const short = complete.slice(0, 9);
+    expect(isMatchdayComplete(short, 1, TEAMS.length)).toBe(false);
+  });
+
+  it("defaults to PENDING when the caller says nothing about completeness", () => {
+    // The signal is opt-in: a caller that forgets it gets the safe answer.
+    const complete = [fixture("Chelsea", "Bournemouth", { result: "home" })];
+    const settled = settleRound(
+      [entry("e1", "p1")],
+      [pick("e1", "Arsenal")],
+      complete,
+      1
+    );
+    expect(settled.unsettled).toEqual(["e1"]);
+    expect(settled.entries[0].status).toBe("active");
+  });
+
   it("stays PENDING when the matchday has no fixtures at all", () => {
     // No fixtures loaded is not "nobody is playing" — it is "we do not know
     // yet". Eliminating the entire field because a seed script had not run is
@@ -623,7 +738,8 @@ describe("settleRound — a team with no game", () => {
       [entry("e1", "p1"), entry("e2", "p2")],
       [pick("e1", "Arsenal"), pick("e2", "Chelsea")],
       [],
-      1
+      1,
+      isMatchdayComplete([], 1, TEAMS.length)
     );
     expect(settled.unsettled).toEqual(["e1", "e2"]);
     expect(settled.entries.map((e) => e.status)).toEqual(["active", "active"]);
@@ -634,7 +750,12 @@ describe("settleRound — a team with no game", () => {
       [entry("e1", "p1")],
       [pick("e1", "Arsenal")],
       [fixture("Chelsea", "Bournemouth", { matchday: 2, result: "home" })],
-      1
+      1,
+      isMatchdayComplete(
+        [fixture("Chelsea", "Bournemouth", { matchday: 2, result: "home" })],
+        1,
+        TEAMS.length
+      )
     );
     expect(settled.unsettled).toEqual(["e1"]);
   });

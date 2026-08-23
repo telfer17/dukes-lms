@@ -15,6 +15,7 @@ import {
   autoAssignSeed,
   autoAssignTeam,
   buybackEligibility,
+  isMatchdayComplete,
   fixtureForTeam,
   isWinPendingUnplayedFixtures,
   openBuybackWindows,
@@ -386,11 +387,21 @@ export function buildSettlementPlan(input: BuildPlanInput): PlanOutcome {
     ...autoAssign,
   ];
 
+  // Whether a team missing from `fixtures` means "not playing" or "not loaded
+  // yet" — the difference between an elimination and a refusal. `teams` is the
+  // whole league, straight from the teams table.
+  const matchdayComplete = isMatchdayComplete(
+    fixtures,
+    round.matchday,
+    teams.length
+  );
+
   const settlement = settleRound(
     engineEntries,
     enginePicks,
     fixtures,
-    round.matchday
+    round.matchday,
+    matchdayComplete
   );
 
   if (settlement.unsettled.length > 0) {

@@ -95,6 +95,36 @@ export function teamsPlayingIn(
   return playing;
 }
 
+/**
+ * Is this matchday's fixture list COMPLETE — every club in the league has a
+ * game on it?
+ *
+ * The question exists because of one asymmetry: an absent fixture has two
+ * completely different meanings, and they are indistinguishable from the
+ * fixture list alone.
+ *
+ *   "this team is not playing"   → a real answer. No game, no win.
+ *   "we have not loaded it yet"  → not an answer at all.
+ *
+ * Getting that wrong ELIMINATES SOMEBODY. So the second reading is the default,
+ * and only a fixture list that accounts for every club in the league is trusted
+ * to mean the first. In the Premier League all 20 clubs play every matchday —
+ * a postponed game is still a fixture, with status 'postponed' — so a matchday
+ * missing anybody is a matchday still being loaded, not a short one.
+ *
+ * `teamCount` is the size of the league, not of the fixture list: the caller
+ * passes the teams table (db/verify-fixtures.sql asserts the same invariant at
+ * seed time, by hand; this is the runtime half of it).
+ */
+export function isMatchdayComplete(
+  fixtures: Fixture[],
+  matchday: number,
+  teamCount: number
+): boolean {
+  if (teamCount <= 0) return false;
+  return teamsPlayingIn(fixtures, matchday).size === teamCount;
+}
+
 // ---------------------------------------------------------------------------
 // Rule 1 — settling a single pick
 // ---------------------------------------------------------------------------
@@ -298,7 +328,17 @@ export function settleRound(
   entries: EntryRecord[],
   picks: PickRecord[],
   fixtures: Fixture[],
-  matchday: number
+  matchday: number,
+  /**
+   * Whether `fixtures` is known to hold EVERY club's game for this matchday —
+   * see isMatchdayComplete.
+   *
+   * Defaults to FALSE, and the default is the safety property: a caller that
+   * forgets this argument gets picks left `pending` and a settlement that
+   * refuses, never one that eliminates on a fixture list it could not vouch
+   * for. Opting in to the elimination has to be deliberate.
+   */
+  matchdayComplete: boolean = false
 ): RoundSettlement {
   const pickByEntry = new Map(picks.map((p) => [p.entry_id, p]));
   const outcomes: SettledOutcome[] = [];
@@ -314,13 +354,20 @@ export function settleRound(
   // out. A manual pick can never get here: validatePick refuses a team that is
   // not playing.
   //
-  // Gated on the matchday having ANY fixtures, and that gate is load-bearing.
-  // With no fixtures loaded, EVERY team has "no game" — and eliminating the
-  // entire competition because a seed script had not run yet is the one failure
-  // this must not have. Empty means unknown, and unknown stays `pending`, which
-  // is what makes settlement refuse rather than guess.
-  const playing = teamsPlayingIn(fixtures, matchday);
-  const matchdayIsKnown = playing.size > 0;
+  // Gated on the fixture list being COMPLETE, and that gate is load-bearing.
+  //
+  // "Any fixtures at all" is not enough, and this used to make that mistake. A
+  // half-loaded matchday — three of the ten games in the table — makes fourteen
+  // clubs look like they have no game, and every entry holding one of them
+  // would be eliminated on a fixture nobody had entered yet. Settlement is not
+  // reversible and the board is public.
+  //
+  // So the test is "does every club in the league have a game here?". If the
+  // answer is no, the list is still being loaded: picks stay `pending`, and
+  // settlement refuses with the same posture as a missing result. The one
+  // legitimate no-game case — the auto-assign fallback of
+  // docs/LMS-RULES.md decision 1 — only ever happens on a complete matchday,
+  // because that is the only kind the organiser can lock or settle.
 
   const settledEntries = entries.map((entry) => {
     if (entry.status !== "active") return entry;
@@ -332,9 +379,9 @@ export function settleRound(
     }
 
     const fixture = fixtureForTeam(fixtures, pick.team_id, matchday);
-    // No game, no win. Not "not settled yet" — there is nothing to wait for.
+    // No game, no win — but only where "no game" is a fact rather than a gap.
     const outcome: PickOutcome =
-      !fixture && matchdayIsKnown
+      !fixture && matchdayComplete
         ? "eliminated"
         : settlePick(pick.team_id, fixture);
     outcomes.push({

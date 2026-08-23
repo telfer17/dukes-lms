@@ -257,31 +257,38 @@ describe("buildSettlementPlan", () => {
   });
 
   it("assigns a NOT-PLAYING team rather than skipping an entry with none left", () => {
-    // Only one fixture this matchday, and Ann has used both teams in it. The old
-    // rule refused the whole settlement here ('auto_assign_stuck'). Decision 1
-    // in docs/LMS-RULES.md replaces that: she is given an unused team anyway,
-    // even though it has no game — and a team with no game cannot win, so she
-    // goes out. Not sending a pick in has a consequence; it does not stop the
-    // competition.
+    // Decision 1 in docs/LMS-RULES.md: the old rule refused the whole
+    // settlement here ('auto_assign_stuck'); now Ann is given an unused team
+    // even though it has no game, and goes out on it.
+    //
+    // A FOUR-team league, so the two-fixture matchday is COMPLETE — every club
+    // has a game. That matters: "no game" only settles as an elimination on a
+    // matchday whose fixture list is finished, and this is the shape where the
+    // fallback and completeness can both hold at once. (In a real 20-team
+    // league all 20 play every matchday, so the fallback never fires at all.)
+    const league = TEAMS.slice(0, 4);
     const built = build({
-      fixtures: [fixture(10, 1, 2, "played", "home")],
+      teams: league,
+      fixtures: [
+        fixture(10, 1, 2, "played", "home"),
+        fixture(11, 3, 4, "played", "draw"),
+      ],
       entries: [{ ...entry("e1", "p1"), label: "Ann" }],
       roundNumberById: new Map([
         ["r0", 0],
         ["r1", 1],
       ]),
+      // Ann has used three of the four; only team 4 is left to her, and it
+      // drew — so she is assigned it and it does not save her.
       picks: [
         { entry_id: "e1", round_id: "r0", team_id: 1 },
         { entry_id: "e1", round_id: "r0", team_id: 2 },
+        { entry_id: "e1", round_id: "r0", team_id: 3 },
       ],
     });
     if (!built.ok) throw new Error(built.reason);
 
-    expect(built.plan.auto_assign).toHaveLength(1);
-    const assigned = built.plan.auto_assign[0].team_id;
-    expect([1, 2]).not.toContain(assigned); // not a used team
-    expect([3, 4, 5, 6]).toContain(assigned); // and not playing this matchday
-
+    expect(built.plan.auto_assign).toEqual([{ entry_id: "e1", team_id: 4 }]);
     // Settled, not left pending: she is out.
     expect(built.plan.pick_outcomes).toEqual([
       { entry_id: "e1", outcome: "eliminated" },
@@ -898,5 +905,52 @@ describe("buildLockPlan", () => {
     );
     expect(built.stuck).toEqual(["Ann"]);
     expect(built.plan.assign).toEqual([]);
+  });
+});
+
+describe("buildSettlementPlan — an incomplete matchday REFUSES, never eliminates", () => {
+  // The plan builder is where the completeness signal is derived, so this is
+  // where a half-loaded matchday has to be stopped. The refusal names the team
+  // rather than settling it: a fixture nobody has entered is not a result.
+  it("refuses rather than settling a pick whose fixture is missing", () => {
+    const built = build({
+      // TEAMS has six clubs; only two of them have a game here, so the matchday
+      // is plainly unfinished.
+      fixtures: [fixture(10, 1, 2, "played", "home")],
+      entries: [entry("e1", "p1"), entry("e2", "p2")],
+      picks: [
+        { entry_id: "e1", round_id: "r1", team_id: 1 }, // Arsenal, played
+        { entry_id: "e2", round_id: "r1", team_id: 5 }, // Chelsea, no fixture
+      ],
+    });
+
+    expect(built).toEqual({
+      ok: false,
+      reason: "unsettled",
+      count: 1,
+      fixtures: ["Chelsea (no matchday 1 fixture)"],
+    });
+  });
+
+  it("settles the no-game pick once every club has a fixture", () => {
+    // The same pick, on a matchday that accounts for all six clubs. Now Chelsea
+    // having no game is a fact, and e2 is out on it.
+    const built = build({
+      teams: TEAMS.slice(0, 4),
+      fixtures: [
+        fixture(10, 1, 2, "played", "home"),
+        fixture(11, 3, 4, "played", "draw"),
+      ],
+      entries: [entry("e1", "p1"), entry("e2", "p2")],
+      picks: [
+        { entry_id: "e1", round_id: "r1", team_id: 1 },
+        { entry_id: "e2", round_id: "r1", team_id: 5 }, // not in this 4-team league
+      ],
+    });
+
+    if (!built.ok) throw new Error(built.reason);
+    expect(built.plan.pick_outcomes).toEqual(
+      expect.arrayContaining([{ entry_id: "e2", outcome: "eliminated" }])
+    );
   });
 });

@@ -853,13 +853,20 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
         await expectNothingHappened(w.competitionId, w.roundId);
       });
 
-      it("a team not in the matchday is OUT, not waited for", async () => {
-        // The neighbouring case, and it changed with the lock. A team with no
-        // fixture used to be treated as a missing result and the whole round
-        // refused. It is now an answer: no game, no win. The auto-assign
-        // fallback can hand somebody a team that is not playing
-        // (docs/LMS-RULES.md decision 1), so waiting for it would hang the
-        // round forever.
+      it("a team missing from an INCOMPLETE matchday is waited for, not eliminated", async () => {
+        // The neighbouring case, and the one that decides whether a half-loaded
+        // fixture list can put somebody out.
+        //
+        // A team with no fixture has two possible meanings — "not playing" and
+        // "not loaded yet" — and they are indistinguishable from the fixture
+        // list alone. This matchday holds a handful of games out of twenty
+        // clubs, so it is plainly still being loaded, and the safe reading is
+        // the only one available: P2's pick stays unsettled and the whole round
+        // refuses. Exactly the posture of the missing-result guard.
+        //
+        // (The other reading — no game, no win — is reserved for a COMPLETE
+        // matchday, where an absent fixture really is an answer. See
+        // isMatchdayComplete in lib/lms.ts.)
         const w = await seedWeekend({ status: "played", result: "home" });
         await db.sql("update picks set team_id = $1 where entry_id = $2", [
           team.get("Sunderland")!,
@@ -867,20 +874,17 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
         ]);
 
         const built = await planFromDatabase(db, w.competitionId, w.roundId);
-        if (!built.ok) throw new Error(built.reason);
-        // Both are out: P1 lost, P2 had no game.
-        expect(built.plan.pick_outcomes).toEqual(
-          expect.arrayContaining([
-            { entry_id: w.p1, outcome: "eliminated" },
-            { entry_id: w.p2, outcome: "eliminated" },
-          ])
-        );
+        expect(built).toEqual({
+          ok: false,
+          reason: "unsettled",
+          count: 1,
+          fixtures: ["Sunderland (no matchday 1 fixture)"],
+        });
 
-        const applied = await db.settle(built.plan);
-        expect(applied).toMatchObject({ ok: true, code: "settled" });
+        // Nothing was settled, so nobody went out on a fixture nobody entered.
         expect(await db.entryStatuses(w.competitionId)).toEqual({
-          P1: "eliminated",
-          P2: "eliminated",
+          P1: "active",
+          P2: "active",
         });
       });
 

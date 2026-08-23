@@ -180,16 +180,24 @@ suite(hasDatabase ? "locking a round (integration)" : SKIP_NOTICE, () => {
       });
     });
 
-    it("assigns a team with NO GAME rather than skipping an entry", async () => {
-      // Decision 1: an entry with nothing left that is PLAYING still gets a
-      // team, and it takes them out at settlement.
+    it("still DRAWS for an entry with nothing playing — and settlement then refuses", async () => {
+      // Decision 1 (docs/LMS-RULES.md) and the completeness guard, meeting.
+      //
+      // The draw never skips an entry: with no unused team playing, it hands
+      // out an unused team that has no game. What has changed is what happens
+      // NEXT. A matchday holding one fixture out of twenty clubs is a matchday
+      // still being loaded, so settlement will not read "no game" as an answer —
+      // it refuses, and nobody is eliminated on a fixture list nobody finished.
+      //
+      // Worth stating plainly: on a COMPLETE Premier League matchday all twenty
+      // clubs play, so an entry can never run out of playing teams and this
+      // fallback cannot fire at all. It is a safety net for bad data, and the
+      // guard below is what stops that bad data putting anyone out.
       await seedMatchday();
       const competitionId = await db.addCompetition();
       const round1 = await db.addRound({
         competitionId, roundNumber: 1, matchday: 1, deadlineHours: -8,
       });
-      // Two more matchdays of the same single fixture, postponed — so both
-      // entries survive round 2 and arrive at round 3 having used both teams.
       for (const matchday of [2, 3]) {
         await db.addFixture({
           matchday,
@@ -237,21 +245,19 @@ suite(hasDatabase ? "locking a round (integration)" : SKIP_NOTICE, () => {
       const locked = await lock(competitionId, round3);
       expect(locked).toMatchObject({ ok: true, assigned: 2 });
 
+      // Nobody was skipped: both hold a team, and it is one with no game.
       for (const pick of await db.picksForRound(round3)) {
         expect(pick.auto_assigned).toBe(true);
-        // A team with no game this matchday — which is the point.
         expect(["Arsenal", "Chelsea"]).not.toContain(pick.team);
       }
 
-      // Settlement does NOT hang waiting for a result that is never coming: no
-      // game, no win, both out.
-      const settled = await db.settle(
-        plan(await planFromDatabase(db, competitionId, round3))
-      );
-      expect(settled).toMatchObject({ ok: true, code: "settled" });
+      // And settlement REFUSES rather than putting them out on it, because a
+      // one-fixture matchday cannot vouch for "no game".
+      const built = await planFromDatabase(db, competitionId, round3);
+      expect(built).toMatchObject({ ok: false, reason: "unsettled" });
       expect(await db.entryStatuses(competitionId)).toEqual({
-        Ann: "eliminated",
-        Bob: "eliminated",
+        Ann: "active",
+        Bob: "active",
       });
     });
   });
@@ -428,9 +434,12 @@ suite(hasDatabase ? "locking a round (integration)" : SKIP_NOTICE, () => {
       }
     });
 
-    it("locking first reaches the identical picks", async () => {
-      // Same seed data, two routes: lock-then-settle vs settle-only. The picks
-      // must match team for team.
+    it("settling a LOCKED round leaves its picks exactly as locked", async () => {
+      // The other half of the guarantee. The test above shows an unlocked round
+      // settles to the teams locking would have written; this shows settlement
+      // does not RE-draw a round that was already locked — the backstop fills
+      // blanks, and a locked round has none, so every team and every auto flag
+      // survives the settle untouched.
       const a = await seedRound(4);
       await lock(a.competitionId, a.roundId);
       const lockedPicks = (await db.picksForRound(a.roundId)).map((p) => ({
@@ -438,10 +447,8 @@ suite(hasDatabase ? "locking a round (integration)" : SKIP_NOTICE, () => {
         auto: p.auto_assigned,
       }));
 
-      // Rebuild the identical world — same entry ids are impossible, so compare
-      // the DRAW instead: re-derive it for the same entries and check it is
-      // unchanged after a settle.
       await db.settle(plan(await planFromDatabase(db, a.competitionId, a.roundId)));
+
       const settledPicks = (await db.picksForRound(a.roundId)).map((p) => ({
         team: p.team,
         auto: p.auto_assigned,
