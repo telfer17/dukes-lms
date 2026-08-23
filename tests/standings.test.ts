@@ -9,7 +9,11 @@ import { describe, expect, it } from "vitest";
 import {
   ELIMINATED_HEADING,
   NO_ELIMINATIONS_LINE,
+  NO_OUT_SO_FAR_LINE,
   noStandingLine,
+  OUT_SO_FAR_HEADING,
+  OUT_SO_FAR_NOTE,
+  partitionLive,
   rankEliminated,
   rankStanding,
   splitStandings,
@@ -126,5 +130,56 @@ describe("the shared wording", () => {
   it("names the second group the same way for every screen", () => {
     expect(ELIMINATED_HEADING).toBe("Eliminated");
     expect(NO_ELIMINATIONS_LINE).toBe("No one's out yet.");
+  });
+});
+
+describe("partitionLive", () => {
+  const row = (name: string, liveOut: boolean) => ({
+    name,
+    status: "active" as const,
+    eliminatedRound: null,
+    liveOut,
+  });
+
+  it("reconciles: still in + out so far = exactly the rows passed in", () => {
+    // The property the leaderboard's headline and its two live tables lean
+    // on — the "out so far" list IS the subtraction from the top count, not a
+    // second computation that could drift from it.
+    const rows = [
+      row("Ann", false),
+      row("Bob", true),
+      row("Cat", false),
+      row("Dan", true),
+    ];
+    const { stillIn, outSoFar } = partitionLive(rows);
+    expect(stillIn.map((r) => r.name)).toEqual(["Ann", "Cat"]);
+    expect(outSoFar.map((r) => r.name)).toEqual(["Bob", "Dan"]);
+    expect(stillIn.length + outSoFar.length).toBe(rows.length);
+    expect([...stillIn, ...outSoFar].sort((a, b) => a.name.localeCompare(b.name)))
+      .toEqual(rows);
+  });
+
+  it("preserves the incoming order in both halves — a filter, not a re-rank", () => {
+    const rows = [row("Zoe", true), row("Ann", true), row("Mia", false)];
+    const { stillIn, outSoFar } = partitionLive(rows);
+    expect(outSoFar.map((r) => r.name)).toEqual(["Zoe", "Ann"]);
+    expect(stillIn.map((r) => r.name)).toEqual(["Mia"]);
+  });
+
+  it("with nobody dropped, everyone is still in", () => {
+    const rows = [row("Ann", false), row("Bob", false)];
+    const { stillIn, outSoFar } = partitionLive(rows);
+    expect(stillIn).toHaveLength(2);
+    expect(outSoFar).toHaveLength(0);
+  });
+});
+
+describe("the live window's words", () => {
+  it("never calls the dropped group Eliminated — that word is settlement's", () => {
+    expect(OUT_SO_FAR_HEADING).toBe("Out so far");
+    expect(OUT_SO_FAR_HEADING).not.toContain(ELIMINATED_HEADING);
+    // And the framing says provisional out loud.
+    expect(OUT_SO_FAR_NOTE).toBe("Provisional — not settled yet");
+    expect(NO_OUT_SO_FAR_LINE).toBe("No one's dropped out yet.");
   });
 });

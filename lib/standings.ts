@@ -62,17 +62,53 @@ export function splitStandings<T extends StandingRow>(
   };
 }
 
+/**
+ * The live window's split of the STANDING group: who is still in on the
+ * results entered so far, and who has dropped. A pure partition of the very
+ * rows passed in — nothing added, nothing lost — so
+ * stillIn + outSoFar always reconciles to the whole list. That identity is
+ * what lets the leaderboard's headline count and its two live tables be the
+ * same numbers by construction rather than by coincidence: the page counts
+ * stillIn, the tables render both halves.
+ *
+ * Display-only, like liveOut itself (lib/grid-projection.ts): being in
+ * outSoFar changes nothing in the database and is NOT an elimination.
+ */
+export function partitionLive<T extends { liveOut: boolean }>(
+  rows: T[]
+): { stillIn: T[]; outSoFar: T[] } {
+  return {
+    stillIn: rows.filter((r) => !r.liveOut),
+    outSoFar: rows.filter((r) => r.liveOut),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // The words. Shared so the headline and the tables cannot describe the same two
 // groups differently.
 // ---------------------------------------------------------------------------
 
-/** Heading for the survivors — past tense once the competition is over. */
-export function standingHeading(concluded: boolean): string {
+/**
+ * Heading for the survivors — past tense once the competition is over, and
+ * hedged while a round is live: "so far" is what keeps a mid-round list from
+ * reading as a verdict, in the headline and the table at once.
+ */
+export function standingHeading(concluded: boolean, live = false): string {
+  if (live) return "Still in so far";
   return concluded ? "Made it to the end" : "Still standing";
 }
 
 export const ELIMINATED_HEADING = "Eliminated";
+
+/**
+ * The live window's dropped group. Deliberately NOT "Eliminated": that word is
+ * the settled record's, written only by settlement. These entries are still
+ * officially in — they have merely dropped off "still in so far" on results
+ * entered so far, and the note under the heading says exactly that.
+ */
+export const OUT_SO_FAR_HEADING = "Out so far";
+export const OUT_SO_FAR_NOTE = "Provisional — not settled yet";
+export const NO_OUT_SO_FAR_LINE = "No one's dropped out yet.";
 
 /**
  * Nobody left. On a concluded competition that can only be a rollover — a win

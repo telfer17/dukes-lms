@@ -10,14 +10,16 @@ import {
   currentRound,
   getBuybacks,
   getEntries,
+  getFixturesForMatchday,
   getPicksForCompetition,
   getRounds,
   getTeams,
   isRoundOpen,
   type RoundRow,
 } from "@/lib/lms-db";
+import { computeProvisionalView, type ProvisionalView } from "@/lib/provisional";
 import { isConcluded, readPublicCompetition } from "@/lib/public-read";
-import { splitStandings, standingHeading } from "@/lib/standings";
+import { partitionLive, splitStandings, standingHeading } from "@/lib/standings";
 
 // Live data, never cached.
 export const dynamic = "force-dynamic";
@@ -108,6 +110,7 @@ export default async function LeaderboardPage() {
   let summary: ConcludedSummary | null = null;
   let potLabel: string | null = null;
   let round: RoundRow | null = null;
+  let provisional: ProvisionalView | null = null;
 
   try {
     const [rounds, entries, picks, teams, buybacks] = await Promise.all([
@@ -118,11 +121,38 @@ export default async function LeaderboardPage() {
       getBuybacks(competition.id),
     ]);
 
+    // Rounds are generated for the whole season up front, so currentRound()
+    // happily returns round 12 of a competition that ended at round 5 — and
+    // "picks lock in 4 days" under a winner's name is the sort of thing that
+    // gets an organiser phoned.
+    round = concluded ? null : currentRound(rounds);
+
+    // LIVE, READ-ONLY. In the window between the organiser locking the round
+    // and settling it, results are landing one game at a time — so the "still
+    // in" list drops entries whose pick has confirmedly failed, computed on
+    // the fly from fixtures + picks through the pure engine
+    // (lib/provisional.ts). Nothing is written: settlement remains the one
+    // deliberate action that makes anyone's exit real, and outside the
+    // locked-but-unsettled window computeProvisionalView returns null and this
+    // page renders exactly the confirmed standings it always did.
+    const liveRound = round;
+    if (liveRound?.status === "locked") {
+      const fixtures = await getFixturesForMatchday(liveRound.matchday);
+      provisional = computeProvisionalView({
+        round: liveRound,
+        entries,
+        picks: picks.filter((pick) => pick.round_id === liveRound.id),
+        fixtures,
+        teamCount: teams.length,
+      });
+    }
+
     const projected = buildGridRows({
       rounds,
       entries,
       picks,
       teamNameById: new Map(teams.map((t) => [t.id, t.name])),
+      liveOutEntryIds: provisional?.outEntryIds,
     });
     rows = projected.rows;
     roundLabels = projected.roundLabels;
@@ -133,12 +163,6 @@ export default async function LeaderboardPage() {
     potLabel = formatPence(
       potPence(competition.pot_carried_in_pence, [...entries, ...buybacks])
     );
-
-    // Rounds are generated for the whole season up front, so currentRound()
-    // happily returns round 12 of a competition that ended at round 5 — and
-    // "picks lock in 4 days" under a winner's name is the sort of thing that
-    // gets an organiser phoned.
-    round = concluded ? null : currentRound(rounds);
 
     // Same entries, no second read.
     if (concluded)
@@ -155,14 +179,22 @@ export default async function LeaderboardPage() {
   }
 
   // The headline count, off the same rows the tables render — one source, so
-  // the number at the top can never disagree with the table under it.
+  // the number at the top can never disagree with the table under it. While a
+  // round is live that is the SAME partition the tables make (still in so far
+  // / out so far, via partitionLive); the confirmed statuses underneath don't
+  // change until settlement.
   const { standing } = splitStandings(rows);
+  const live = provisional !== null;
+  const shownStanding = live
+    ? partitionLive(standing).stillIn.length
+    : standing.length;
 
   return (
     <Shell
       label={competition.label}
       concluded={concluded}
-      standing={standing.length}
+      live={live}
+      standing={shownStanding}
       total={rows.length}
       potLabel={potLabel}
     >
@@ -178,16 +210,29 @@ export default async function LeaderboardPage() {
               matchday {round.matchday}
             </span>
           </p>
-          <p className="mt-1 text-sm text-gray-600">
-            {isRoundOpen(round) ? (
-              <>
-                Picks lock in <DeadlineCountdown deadline={round.deadline} /> —{" "}
-                {deadlineFormat.format(new Date(round.deadline))}
-              </>
-            ) : (
-              <>Locked — {deadlineFormat.format(new Date(round.deadline))}</>
-            )}
-          </p>
+          {provisional ? (
+            // THE framing for the live window, one line, unmissable: results
+            // are coming in and nothing on this page is final until the
+            // organiser settles the round.
+            <p className="mt-1 text-sm font-semibold text-amber-700">
+              Round in progress —{" "}
+              <span className="tabular-nums">
+                {provisional.played} of {provisional.total}
+              </span>{" "}
+              games played. Not settled yet.
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-gray-600">
+              {isRoundOpen(round) ? (
+                <>
+                  Picks lock in <DeadlineCountdown deadline={round.deadline} />{" "}
+                  — {deadlineFormat.format(new Date(round.deadline))}
+                </>
+              ) : (
+                <>Locked — {deadlineFormat.format(new Date(round.deadline))}</>
+              )}
+            </p>
+          )}
         </div>
       )}
 
@@ -203,6 +248,7 @@ export default async function LeaderboardPage() {
             rows={rows}
             roundLabels={roundLabels}
             concluded={concluded}
+            live={live}
           />
         </div>
       )}
@@ -231,6 +277,7 @@ export default async function LeaderboardPage() {
 function Shell({
   label,
   concluded = false,
+  live = false,
   standing,
   total,
   potLabel,
@@ -238,6 +285,8 @@ function Shell({
 }: {
   label?: string;
   concluded?: boolean;
+  /** A round is in progress: `standing` is the live still-in-so-far count. */
+  live?: boolean;
   /** Entries still in. Omitted on the error and empty states. */
   standing?: number;
   total?: number;
@@ -279,7 +328,7 @@ function Shell({
                 past tense once it is over, because nobody is "still" anything
                 on a competition that has finished. */}
             <p className="text-sm uppercase tracking-wide text-gray-500">
-              {standingHeading(concluded).toLowerCase()}
+              {standingHeading(concluded, live).toLowerCase()}
             </p>
           </>
         )}

@@ -25,6 +25,15 @@ export type GridRow = {
   status: "active" | "eliminated" | "winner";
   /** Round number they went out in, if they did. */
   eliminatedRound: number | null;
+  /**
+   * DISPLAY-ONLY: true when the round in progress has a CONFIRMED result
+   * against this entry's pick — a draw or loss already entered — so the live
+   * "still in" list omits it (lib/provisional.ts). Always false outside the
+   * locked-but-unsettled window and on eliminated/winner rows: their fate is
+   * confirmed, not live. This never feeds a write; `status` above stays the
+   * only official answer, and this row is NOT in the Eliminated table.
+   */
+  liveOut: boolean;
   /** One slot per round column, in round order; null where no pick exists. */
   cells: (GridCell | null)[];
 };
@@ -66,8 +75,16 @@ export function buildGridRows(input: {
   entries: EntryInput[];
   picks: PickInput[];
   teamNameById: Map<number, string>;
+  /**
+   * ENTRY IDS whose pick has confirmedly failed in the round in progress, if
+   * the page is inside the locked-but-unsettled window. Keyed by the private
+   * entry id because that is the only honest join key (two entries can share
+   * a name) — consumed HERE, inside the security boundary, and only a boolean
+   * crosses to the row.
+   */
+  liveOutEntryIds?: Set<string>;
 }): { rows: GridRow[]; roundLabels: string[] } {
-  const { rounds, entries, picks, teamNameById } = input;
+  const { rounds, entries, picks, teamNameById, liveOutEntryIds } = input;
   const roundNumberById = new Map(rounds.map((r) => [r.id, r.round_number]));
 
   const columns = relevantRoundCount(
@@ -101,6 +118,11 @@ export function buildGridRows(input: {
         name: entry.participant?.name ?? "—",
         status: entry.status,
         eliminatedRound,
+        // Active rows only, whatever the set says: a live overlay on a
+        // confirmed elimination (or a winner) would be a second answer to a
+        // question that is already settled.
+        liveOut:
+          entry.status === "active" && (liveOutEntryIds?.has(entry.id) ?? false),
         cells: Array.from(
           { length: columns },
           (_, i) => byRound?.get(i + 1) ?? null
