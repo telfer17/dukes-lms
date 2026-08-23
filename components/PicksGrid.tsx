@@ -2,7 +2,11 @@ import type { GridCell, GridRow } from "@/lib/grid-projection";
 import {
   ELIMINATED_HEADING,
   NO_ELIMINATIONS_LINE,
+  NO_OUT_SO_FAR_LINE,
   noStandingLine,
+  OUT_SO_FAR_HEADING,
+  OUT_SO_FAR_NOTE,
+  partitionLive,
   splitStandings,
   standingHeading,
 } from "@/lib/standings";
@@ -29,6 +33,19 @@ import { displayTeamName } from "@/lib/team-names";
 //
 // No "use client": with the toggle gone there is no state left, so this is a
 // server component and none of it ships as JavaScript.
+//
+// LIVE MODE. While the current round is locked but not yet settled, the page
+// sets `live` and rows whose pick has confirmedly failed in the results so far
+// carry liveOut (lib/provisional.ts). The one thing live mode does is
+// PARTITION: the standing group splits into "Still in so far" and "Out so far"
+// — the same rows, so the two sections reconcile with the headline count by
+// construction. A team that won and a team still to play read the same —
+// still in. The dropped rows do NOT join the Eliminated table; "Eliminated" is
+// the permanent record, written only by settlement, so in live mode that
+// section appears only when it has confirmed rows from earlier rounds to show
+// (its "(0) — no one's out yet" next to a visibly shrinking field is exactly
+// the contradiction this avoids). Once the round settles, `live` is false and
+// this renders exactly the confirmed standings it always did.
 
 const OUTCOME_MARK: Record<GridCell["outcome"], string> = {
   survived: "✓",
@@ -213,14 +230,24 @@ export default function PicksGrid({
   rows,
   roundLabels,
   concluded = false,
+  live = false,
 }: {
   rows: GridRow[];
   roundLabels: string[];
   /** Past tense: "still standing" is not a thing once the competition is over. */
   concluded?: boolean;
+  /** True only in the locked-but-unsettled window — see the LIVE MODE note. */
+  live?: boolean;
 }) {
   const { standing, eliminated } = splitStandings(rows);
-  const aliveHeading = standingHeading(concluded);
+  // The live partition. Everything else — the confirmed split, the ranking,
+  // the eliminated section — reads confirmed status exactly as before;
+  // liveOut is false on every row outside the live window, and both halves
+  // keep splitStandings' alphabetical order (a filter reorders nothing).
+  const { stillIn, outSoFar } = live
+    ? partitionLive(standing)
+    : { stillIn: standing, outSoFar: [] };
+  const aliveHeading = standingHeading(concluded, live);
 
   return (
     <>
@@ -233,48 +260,105 @@ export default function PicksGrid({
           <h2 className="text-sm font-bold uppercase tracking-wide text-gray-900">
             {aliveHeading}{" "}
             <span className="tabular-nums text-gray-500">
-              ({standing.length})
+              ({stillIn.length})
             </span>
           </h2>
         </Pinned>
 
-        {standing.length === 0 ? (
+        {stillIn.length === 0 ? (
           <Pinned className="px-2 pb-3 text-sm text-gray-500">
             {noStandingLine(concluded)}
           </Pinned>
         ) : (
           <GridTable
-            rows={standing}
+            rows={stillIn}
             roundLabels={roundLabels}
             caption={`${aliveHeading}, with every pick`}
           />
         )}
 
-        {/* The gap is the separation — two sections of one sheet, not two
-            unrelated tables. */}
-        <Pinned className="px-2 pt-8 pb-1.5">
-          <h2 className="text-sm font-bold uppercase tracking-wide text-gray-500">
-            {ELIMINATED_HEADING}{" "}
-            <span className="tabular-nums text-gray-400">
-              ({eliminated.length})
-            </span>
-          </h2>
-          <p className="text-[11px] font-normal normal-case text-gray-400">
-            Latest exit first
-          </p>
-        </Pinned>
+        {/* The live counterpart section: everyone subtracted from the count
+            above, under a heading that is deliberately NOT "Eliminated" — the
+            note carries the same not-settled framing as the round card.
 
-        {eliminated.length === 0 ? (
-          <Pinned className="px-2 pb-3 text-sm text-gray-500">
-            {NO_ELIMINATIONS_LINE}
-          </Pinned>
-        ) : (
-          <GridTable
-            rows={eliminated}
-            roundLabels={roundLabels}
-            caption="Eliminated entries, latest exit first, with every pick"
-            muted
-          />
+            A CLOSED-BY-DEFAULT panel, and native <details> so it costs no
+            client JavaScript and this stays a server component. The closed
+            summary still tells the whole headline story — the count and the
+            provisional note — so opening it only ever reveals names, never
+            information the reconciliation depends on. */}
+        {live && (
+          <details className="group">
+            <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+              <Pinned className="px-2 pt-8 pb-1.5">
+                <h2 className="text-sm font-bold uppercase tracking-wide text-gray-500">
+                  <span
+                    aria-hidden
+                    className="mr-1 inline-block transition-transform group-open:rotate-90"
+                  >
+                    ▸
+                  </span>
+                  {OUT_SO_FAR_HEADING}{" "}
+                  <span className="tabular-nums text-gray-400">
+                    ({outSoFar.length})
+                  </span>
+                </h2>
+                <p className="text-[11px] font-normal normal-case text-amber-700">
+                  {OUT_SO_FAR_NOTE}
+                  <span className="text-gray-400">
+                    {" "}
+                    · <span className="group-open:hidden">tap to show</span>
+                    <span className="hidden group-open:inline">tap to hide</span>
+                  </span>
+                </p>
+              </Pinned>
+            </summary>
+
+            {outSoFar.length === 0 ? (
+              <Pinned className="px-2 pb-3 text-sm text-gray-500">
+                {NO_OUT_SO_FAR_LINE}
+              </Pinned>
+            ) : (
+              <GridTable
+                rows={outSoFar}
+                roundLabels={roundLabels}
+                caption="Out so far on results entered — provisional until the round is settled"
+                muted
+              />
+            )}
+          </details>
+        )}
+
+        {/* The gap is the separation — sections of one sheet, not unrelated
+            tables. The confirmed record: in the live window it appears only
+            once settlement has actually written somebody into it, so an empty
+            "Eliminated (0)" can never sit under a shrinking live field. */}
+        {(!live || eliminated.length > 0) && (
+          <>
+            <Pinned className="px-2 pt-8 pb-1.5">
+              <h2 className="text-sm font-bold uppercase tracking-wide text-gray-500">
+                {ELIMINATED_HEADING}{" "}
+                <span className="tabular-nums text-gray-400">
+                  ({eliminated.length})
+                </span>
+              </h2>
+              <p className="text-[11px] font-normal normal-case text-gray-400">
+                Latest exit first
+              </p>
+            </Pinned>
+
+            {eliminated.length === 0 ? (
+              <Pinned className="px-2 pb-3 text-sm text-gray-500">
+                {NO_ELIMINATIONS_LINE}
+              </Pinned>
+            ) : (
+              <GridTable
+                rows={eliminated}
+                roundLabels={roundLabels}
+                caption="Eliminated entries, latest exit first, with every pick"
+                muted
+              />
+            )}
+          </>
         )}
       </div>
 

@@ -209,10 +209,79 @@ describe("buildGridRows", () => {
       name: "Zoe Adams",
       status: "eliminated",
       eliminatedRound: 2,
+      liveOut: false,
       cells: [
         { team: "Arsenal", outcome: "survived", auto: false },
         { team: "Chelsea", outcome: "eliminated", auto: true },
       ],
+    });
+  });
+
+  // ---- the live overlay --------------------------------------------------
+  //
+  // Joined by entry id INSIDE the projection — the only honest key, since two
+  // entries can share a name — with only a boolean crossing to the row. The
+  // set is an input full of entry ids, so the leak property is re-checked
+  // with it present.
+
+  describe("liveOut pass-through", () => {
+    it("marks the listed active rows and leaves the rest alone", () => {
+      const { rows } = buildGridRows({
+        rounds,
+        entries: [
+          entry(),
+          entry({ id: ENTRY_UUID_2, participant: { name: "Alan Brown" } }),
+        ],
+        picks: [],
+        teamNameById,
+        liveOutEntryIds: new Set([ENTRY_UUID]),
+      });
+      // Rows are alphabetical: Alan, Zoe.
+      expect(rows.map((r) => [r.name, r.liveOut])).toEqual([
+        ["Alan Brown", false],
+        ["Zoe Adams", true],
+      ]);
+    });
+
+    it("is false without a set — the normal, settled-world render", () => {
+      const { rows } = buildGridRows({
+        rounds,
+        entries: [entry()],
+        picks,
+        teamNameById,
+      });
+      expect(rows[0].liveOut).toBe(false);
+    });
+
+    it("never marks an eliminated or winner row, whatever the set says", () => {
+      // A confirmed fate is not re-answered; status stays authoritative.
+      const { rows } = buildGridRows({
+        rounds,
+        entries: [
+          entry({ status: "eliminated", eliminated_round_id: "r2" }),
+          entry({ id: ENTRY_UUID_2, status: "winner", participant: { name: "Alan Brown" } }),
+        ],
+        picks,
+        teamNameById,
+        liveOutEntryIds: new Set([ENTRY_UUID, ENTRY_UUID_2]),
+      });
+      expect(rows.map((r) => r.liveOut)).toEqual([false, false]);
+    });
+
+    it("leaks no entry id from the live set into the rows", () => {
+      const { rows } = buildGridRows({
+        rounds,
+        entries: [entry()],
+        picks,
+        teamNameById,
+        liveOutEntryIds: new Set([ENTRY_UUID]),
+      });
+      const payload = JSON.stringify(rows);
+      expect(payload).not.toContain(ENTRY_UUID);
+      expect(payload).not.toMatch(
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+      );
+      expect(rows[0].liveOut).toBe(true);
     });
   });
 });
