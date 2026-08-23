@@ -14,13 +14,17 @@ import {
   currentRound,
   getActiveCompetition,
   getBuybacks,
+  getEntries,
   getEntry,
   getFixturesForMatchday,
+  getPicksForCompetition,
   getPicksForEntry,
   getRounds,
   getTeams,
   pickHistoryTeamIds,
 } from "@/lib/lms-db";
+import { isMatchdayComplete } from "@/lib/lms";
+import { buildLockPlan } from "@/lib/settlement-plan";
 import { normaliseUkPhone } from "@/lib/phone";
 import { partitionByNewcomer } from "@/lib/group-payment";
 import { validatePick } from "@/lib/pick-rules";
@@ -318,6 +322,184 @@ export async function markGroupPaid(
 }
 
 /**
+ * Lock the current round: fill every blank with a randomly-drawn team, and mark
+ * the round locked.
+ *
+ * docs/LMS-RULES.md § Locking a round. This is the organiser's press after the
+ * deadline, and it is the moment missed picks are dealt with — not a timer, not
+ * a cron, a person deciding the round is done.
+ *
+ * WHAT IT CANNOT DO. It cannot change a pick that is already there, of either
+ * kind: the plan only covers blanks, and lms_lock_round writes only where a
+ * blank still is. So pressing it twice does nothing the second time, and a late
+ * pick typed in while the plan was being built wins over the draw. Locking and
+ * editing are independent, in either order.
+ *
+ * WHAT IT DOES NOT DECIDE. Which team each entry gets is decided in lib/lms.ts,
+ * from a seed built out of the entry and round ids, so this action cannot
+ * influence the outcome by running at a different time or on a different
+ * machine. Settlement's backstop draws from the same seed and would assign the
+ * identical teams to an unlocked round.
+ *
+ * Pressing BEFORE the deadline is allowed — the UI warns and asks first, which
+ * is where that decision belongs. The server does not second-guess an organiser
+ * who knows everyone is in.
+ */
+export async function lockRound(): Promise<ActionState> {
+  await requireAdmin();
+
+  // Everything below can THROW rather than return an error: lib/lms-db fails
+  // loudly on a bad read. Uncaught, that reaches the organiser as a generic
+  // boundary message with no Lock button left to press. Caught here, it comes
+  // back through the same ActionState path as every other refusal and renders
+  // under the button — the same arrangement setPickForEntry uses, and for the
+  // same reason.
+  try {
+    const competition = await getActiveCompetition();
+    if (!competition) return { error: "No active competition." };
+
+    const rounds = await getRounds(competition.id);
+    const round = currentRound(rounds);
+    if (!round) return { error: "No unsettled round left to lock." };
+    if (round.status === "settled") {
+      return { error: `Round ${round.round_number} is already settled.` };
+    }
+
+    const fixtures = await getFixturesForMatchday(round.matchday);
+    const teams = await getTeams();
+
+    // Refused rather than drawn off a partial list. Locking WRITES PICKS, and a
+    // pick is permanent — so a matchday that is still being loaded must not be
+    // lockable. With half the fixtures in, half the league looks like it has no
+    // game, the draw falls through to the not-playing branch, and those entries
+    // are eliminated at settlement on a fixture nobody had entered yet.
+    //
+    // The same test settlement uses (isMatchdayComplete), applied earlier, where
+    // the damage would be done rather than where it would be noticed.
+    if (!isMatchdayComplete(fixtures, round.matchday, teams.length)) {
+      return {
+        error:
+          fixtures.length === 0
+            ? `No fixtures loaded for matchday ${round.matchday} — load them before locking.`
+            : `Matchday ${round.matchday} has only ${fixtures.length} fixture(s) loaded and not every club has a game. Load the full matchday before locking — otherwise anyone without a pick would be assigned a team with no game and go out on it.`,
+      };
+    }
+
+    const entries = await getEntries(competition.id);
+    const allPicks = await getPicksForCompetition(competition.id);
+
+    const built = buildLockPlan({
+      competitionId: competition.id,
+      round,
+      roundNumberById: new Map(rounds.map((r) => [r.id, r.round_number])),
+      teams,
+      fixtures,
+      entries: entries.map((e) => ({
+        id: e.id,
+        participant_id: e.participant_id,
+        status: e.status,
+        label: e.participant?.name ?? e.id,
+        eliminated_round_number: null,
+      })),
+      picks: allPicks.map((p) => ({
+        entry_id: p.entry_id,
+        round_id: p.round_id,
+        team_id: p.team_id,
+      })),
+    });
+
+    const { data, error } = await supabaseServer.rpc("lms_lock_round", {
+      p_plan: built.plan,
+    });
+
+    if (error) {
+      console.error("lockRound RPC failed:", error);
+      return {
+        error:
+          "Locking failed and nothing was changed — the whole thing is one transaction. Try again.",
+      };
+    }
+
+    const result = data as {
+      ok: boolean;
+      code: string;
+      round_number?: number;
+      assigned?: number;
+      blanks_remaining?: number;
+      already_locked?: boolean;
+      detail?: { round_number?: number } | null;
+    } | null;
+
+    if (!result) {
+      console.error("lockRound returned no result");
+      return { error: "Locking returned nothing. Nothing was changed." };
+    }
+
+    if (!result.ok) {
+      switch (result.code) {
+        case "no_active_competition":
+          return { error: "No active competition." };
+        case "round_settled":
+          return {
+            error: `Round ${result.detail?.round_number ?? round.round_number} is already settled — its picks are final.`,
+          };
+        case "round_not_found":
+          return {
+            error:
+              "The round changed while this was being worked out. Nothing was changed — reload and try again.",
+          };
+        default:
+          console.error("unexpected lock refusal:", result);
+          return { error: "Locking was refused and nothing was changed." };
+      }
+    }
+
+    revalidatePath("/admin/entrants");
+    revalidatePath("/admin/results");
+    revalidatePath("/leaderboard");
+
+    const assigned = result.assigned ?? 0;
+    const stuck =
+      built.stuck.length > 0
+        ? ` No team could be drawn for ${built.stuck.join(", ")} — needs an organiser decision.`
+        : "";
+    const leftover =
+      (result.blanks_remaining ?? 0) > 0
+        ? ` ${result.blanks_remaining} still have no pick — press Lock again to catch them.`
+        : "";
+
+    if (assigned === 0) {
+      // Nothing was assigned — but WHY matters. "Everyone had a pick" and "nobody
+      // could be given one" look identical from the count alone, and only one of
+      // them means the organiser can walk away. buildLockPlan knows which: it
+      // counted the entries it skipped (alreadyPicked) separately from the ones
+      // it could not draw for (stuck).
+      const reason =
+        built.stuck.length > 0
+          ? built.alreadyPicked > 0
+            ? ` ${built.alreadyPicked} already had a pick, and no team could be assigned to the rest.`
+            : " No team could be assigned to anybody."
+          : " Everyone had a pick, so nothing was assigned.";
+
+      return {
+        ok: `Round ${round.round_number} locked${
+          result.already_locked ? " (it already was)" : ""
+        } —${reason}${leftover}${stuck}`,
+      };
+    }
+
+    return {
+      ok: `Round ${round.round_number} locked — ${assigned} ${
+        assigned === 1 ? "entry was" : "entries were"
+      } given a random team from those they haven't used. Picks already in were left alone.${leftover}${stuck}`,
+    };
+  } catch (e) {
+    console.error("lockRound threw:", e);
+    return { error: "Could not lock the round — nothing was changed. Try again." };
+  }
+}
+
+/**
  * Buy an eliminated entry back in — another £10, for the very next round.
  *
  * docs/LMS-RULES.md § Buy-back. Eligibility is NOT decided here: it comes from
@@ -539,8 +721,11 @@ export async function setPickForEntry(
     }
 
     revalidatePath("/admin/entrants");
-    revalidatePath("/grid");
-    revalidatePath("/board");
+    // /grid and /board were merged into /leaderboard and now only redirect
+    // (next.config.ts), so revalidating them did nothing — a pick edit was not
+    // reaching the public page at all. Same three paths lockRound uses.
+    revalidatePath("/admin/results");
+    revalidatePath("/leaderboard");
 
     const team = teams.find((t) => t.id === teamId);
     const who = entry.participant?.name ?? "entry";

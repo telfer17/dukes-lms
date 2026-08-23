@@ -285,6 +285,19 @@ begin
   -- and it is deliberately not a rule: it asks whether the INPUT exists, never
   -- what the input means. Who survives is still decided only in lib/lms.ts.
   --
+  -- A team with NO FIXTURE this matchday is deliberately NOT flagged here, and
+  -- that changed when locking arrived. The auto-assign fallback can hand an
+  -- entry a team that is not playing (docs/LMS-RULES.md decision 1) — there is
+  -- no result coming, and none is needed: no game, no win, the entry is out, and
+  -- lib/lms.ts settles it that way. Waiting for it would hang the round forever.
+  -- The join is therefore an INNER join now: a team that is not playing is not
+  -- a missing input, it is an answer.
+  --
+  -- What still protects a matchday whose fixtures were never loaded is the
+  -- no_fixtures refusal above, which fires before this and covers exactly that
+  -- case. Both layers agree: an EMPTY matchday is unknown, a team missing from a
+  -- LOADED matchday is not playing.
+  --
   -- Scope is exactly the set the engine settles: the picks of entries that are
   -- still active, plus the teams this plan is about to auto-assign. An
   -- eliminated entry's pick from an earlier settle of a locked round is not
@@ -292,11 +305,7 @@ begin
   select coalesce(jsonb_agg(distinct label order by label), '[]'::jsonb)
     into v_missing
     from (
-      select case
-               when f.id is null
-                 then t.name || ' (no matchday ' || v_matchday || ' fixture)'
-               else home_t.name || ' v ' || away_t.name
-             end as label
+      select home_t.name || ' v ' || away_t.name as label
         from (
           select p.team_id
             from picks p
@@ -308,14 +317,12 @@ begin
           select (a->>'team_id')::smallint as team_id
             from jsonb_array_elements(coalesce(p_plan->'auto_assign', '[]'::jsonb)) a
         ) picked
-        join teams t on t.id = picked.team_id
-        left join fixtures f
+        join fixtures f
           on f.matchday = v_matchday
          and (f.home_team_id = picked.team_id or f.away_team_id = picked.team_id)
-        left join teams home_t on home_t.id = f.home_team_id
-        left join teams away_t on away_t.id = f.away_team_id
-       where f.id is null
-          or f.status = 'scheduled'
+        join teams home_t on home_t.id = f.home_team_id
+        join teams away_t on away_t.id = f.away_team_id
+       where f.status = 'scheduled'
           or (f.status = 'played' and f.result is null)
     ) missing;
 
@@ -323,6 +330,46 @@ begin
     return jsonb_build_object(
       'ok', false, 'code', 'missing_results',
       'detail', jsonb_build_object('fixtures', v_missing)
+    );
+  end if;
+
+  -- 3d(ii). A team with NO GAME cannot have SURVIVED.
+  --
+  -- This replaces what the check above used to cover. A team missing from the
+  -- matchday is no longer a missing input — the auto-assign fallback can hand
+  -- an entry a team that is not playing, and lib/lms.ts settles that as an
+  -- elimination (docs/LMS-RULES.md decision 1). So the fixture guard cannot
+  -- refuse it any more.
+  --
+  -- What must still be impossible is the OPPOSITE claim: a plan asserting that
+  -- somebody survived on a team that had no game. No engine-built plan ever says
+  -- that, which is exactly why it is worth refusing — it can only come from a
+  -- forged plan or a broken caller, and it would crown a winner on a match that
+  -- does not exist. Like every other check here it asks about the INPUT, not
+  -- about the rules: no fixture, no survival.
+  select coalesce(jsonb_agg(distinct t.name order by t.name), '[]'::jsonb)
+    into v_missing
+    from jsonb_array_elements(coalesce(p_plan->'pick_outcomes', '[]'::jsonb)) o
+    join (
+      select p.entry_id, p.team_id
+        from picks p
+       where p.round_id = rnd.id
+      union
+      select (a->>'entry_id')::uuid, (a->>'team_id')::smallint
+        from jsonb_array_elements(coalesce(p_plan->'auto_assign', '[]'::jsonb)) a
+    ) picked on picked.entry_id = (o->>'entry_id')::uuid
+    join teams t on t.id = picked.team_id
+   where o->>'outcome' = 'survived'
+     and not exists (
+       select 1 from fixtures f
+        where f.matchday = v_matchday
+          and (f.home_team_id = picked.team_id or f.away_team_id = picked.team_id)
+     );
+
+  if v_missing <> '[]'::jsonb then
+    return jsonb_build_object(
+      'ok', false, 'code', 'impossible_survival',
+      'detail', jsonb_build_object('teams', v_missing, 'matchday', v_matchday)
     );
   end if;
 

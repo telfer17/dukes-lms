@@ -122,29 +122,58 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
 
       expect(result).toMatchObject({ ok: true, code: "settled", end_kind: "continue" });
       expect(await db.roundStatus(roundId)).toBe("settled");
-      expect(await db.entryStatuses(competitionId)).toEqual({
-        Ann: "active", // Arsenal won
-        Bob: "eliminated", // a draw is not a win
-        Cid: "active", // postponed counts as a win
-        Dee: "active", // auto-assigned Arsenal, which won
-      });
 
-      // The eliminated entry records WHICH round did it; nobody else does.
+      const statuses = await db.entryStatuses(competitionId);
+      expect(statuses.Ann).toBe("active"); // Arsenal won
+      expect(statuses.Bob).toBe("eliminated"); // a draw is not a win
+      expect(statuses.Cid).toBe("active"); // postponed counts as a win
+      // Dee's team was DRAWN, so whether she survives depends on which team the
+      // seed gave her — asserting "active" here would be asserting the draw.
+      // What must hold is that her status agrees with her pick's outcome, which
+      // is the actual invariant: an assigned pick lives and dies like any other.
+      const deePick = (await db.picksForRound(roundId)).find(
+        (p) => p.auto_assigned === true
+      )!;
+      expect(statuses.Dee).toBe(
+        deePick.outcome === "survived" ? "active" : "eliminated"
+      );
+
+      // Every eliminated entry records WHICH round did it; nobody else does.
       const stamped = await db.sql(
         `select p.name from entries e join participants p on p.id = e.participant_id
-          where e.competition_id = $1 and e.eliminated_round_id = $2`,
+          where e.competition_id = $1 and e.eliminated_round_id = $2
+          order by p.name`,
         [competitionId, roundId]
       );
-      expect(stamped.map((r) => r.name)).toEqual(["Bob"]);
+      expect(stamped.map((r) => r.name)).toEqual(
+        Object.entries(statuses)
+          .filter(([, status]) => status === "eliminated")
+          .map(([name]) => name)
+          .sort()
+      );
 
       const picks = await db.picksForRound(roundId);
       expect(picks).toHaveLength(4);
-      expect(picks.map((p) => [p.team, p.outcome, p.auto_assigned])).toEqual([
-        ["Arsenal", "survived", false],
-        ["Arsenal", "survived", true], // Dee, first alphabetically and playing
-        ["Bournemouth", "eliminated", false],
-        ["Chelsea", "survived", false],
+      // The three typed-in picks are exactly as entered.
+      expect(
+        picks
+          .filter((p) => p.auto_assigned === false)
+          .map((p) => [p.team, p.outcome])
+      ).toEqual([
+        ["Arsenal", "survived"],
+        ["Bournemouth", "eliminated"],
+        ["Chelsea", "survived"],
       ]);
+      // Dee's is DRAWN, not chosen, so the team is not pinned here — what is
+      // pinned is that she got one, that it is playing this matchday, and that
+      // it was settled. tests/lms.test.ts pins the draw itself.
+      const drawn = picks.filter((p) => p.auto_assigned === true);
+      expect(drawn).toHaveLength(1);
+      expect([
+        "Arsenal", "Aston Villa", "Bournemouth", "Brentford",
+        "Chelsea", "Crystal Palace", "Everton", "Fulham",
+      ]).toContain(drawn[0].team);
+      expect(["survived", "eliminated"]).toContain(drawn[0].outcome);
 
       // The competition itself is untouched by a round that merely continues.
       expect(await db.competitionRow(competitionId)).toMatchObject({
@@ -168,7 +197,8 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
 
       await db.settle(plan(await planFromDatabase(db, competitionId, round1)));
 
-      // Matchday 2, where Chelsea is the alphabetically FIRST team playing.
+      // Matchday 2. Chelsea plays it, and is the team the postponement
+      // consumed — the draw must not offer it to Cid again.
       await db.addFixture({
         matchday: 2,
         homeTeamId: team.get("Chelsea")!,
@@ -194,11 +224,15 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
 
       const picks = await db.picksForRound(round2);
       const byEntry = new Map(picks.map((p) => [p.entry_id as string, p.team as string]));
-      // Chelsea was consumed by the POSTPONED pick even though the game was
-      // never played — so Cid skips past it to Everton.
-      expect(byEntry.get(cid)).toBe("Everton");
-      // Eve never used Chelsea, so she gets it.
-      expect(byEntry.get(eve)).toBe("Chelsea");
+      // The assertion that matters, and the only one the random draw leaves
+      // available: Chelsea was consumed by the POSTPONED pick even though the
+      // game was never played, so it can never be drawn for Cid again.
+      expect(byEntry.get(cid)).not.toBe("Chelsea");
+      expect(["Everton", "Fulham", "Liverpool"]).toContain(byEntry.get(cid));
+      // Eve never used Chelsea, so it stays in her pool.
+      expect(["Chelsea", "Everton", "Fulham", "Liverpool"]).toContain(
+        byEntry.get(eve)
+      );
     });
   });
 
@@ -819,10 +853,20 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
         await expectNothingHappened(w.competitionId, w.roundId);
       });
 
-      it("refuses when a picked team is not in the matchday at all", async () => {
-        // The neighbouring hole: not "no result yet" but "no fixture". The
-        // engine reports it as pending for the same reason, and the function
-        // has to refuse it for the same reason.
+      it("a team missing from an INCOMPLETE matchday is waited for, not eliminated", async () => {
+        // The neighbouring case, and the one that decides whether a half-loaded
+        // fixture list can put somebody out.
+        //
+        // A team with no fixture has two possible meanings — "not playing" and
+        // "not loaded yet" — and they are indistinguishable from the fixture
+        // list alone. This matchday holds a handful of games out of twenty
+        // clubs, so it is plainly still being loaded, and the safe reading is
+        // the only one available: P2's pick stays unsettled and the whole round
+        // refuses. Exactly the posture of the missing-result guard.
+        //
+        // (The other reading — no game, no win — is reserved for a COMPLETE
+        // matchday, where an absent fixture really is an answer. See
+        // isMatchdayComplete in lib/lms.ts.)
         const w = await seedWeekend({ status: "played", result: "home" });
         await db.sql("update picks set team_id = $1 where entry_id = $2", [
           team.get("Sunderland")!,
@@ -836,6 +880,24 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
           count: 1,
           fixtures: ["Sunderland (no matchday 1 fixture)"],
         });
+
+        // Nothing was settled, so nobody went out on a fixture nobody entered.
+        expect(await db.entryStatuses(w.competitionId)).toEqual({
+          P1: "active",
+          P2: "active",
+        });
+      });
+
+      it("REFUSES a plan claiming somebody survived a game that does not exist", async () => {
+        // What the missing-result guard used to cover here, kept: the engine
+        // never claims a survival on a team with no fixture, so a plan that does
+        // is forged or broken — and it would crown a winner on a match that was
+        // never played. The last line of defence, in its new form.
+        const w = await seedWeekend({ status: "played", result: "home" });
+        await db.sql("update picks set team_id = $1 where entry_id = $2", [
+          team.get("Sunderland")!,
+          w.p2,
+        ]);
 
         const refusal = await db.settle({
           ...forgedPlanBase(w),
@@ -852,8 +914,8 @@ describe.skipIf(!hasDatabase)(SUITE, () => {
         });
         expect(refusal).toMatchObject({
           ok: false,
-          code: "missing_results",
-          detail: { fixtures: ["Sunderland (no matchday 1 fixture)"] },
+          code: "impossible_survival",
+          detail: { teams: ["Sunderland"] },
         });
         await expectNothingHappened(w.competitionId, w.roundId);
       });

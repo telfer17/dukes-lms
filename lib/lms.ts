@@ -95,6 +95,36 @@ export function teamsPlayingIn(
   return playing;
 }
 
+/**
+ * Is this matchday's fixture list COMPLETE — every club in the league has a
+ * game on it?
+ *
+ * The question exists because of one asymmetry: an absent fixture has two
+ * completely different meanings, and they are indistinguishable from the
+ * fixture list alone.
+ *
+ *   "this team is not playing"   → a real answer. No game, no win.
+ *   "we have not loaded it yet"  → not an answer at all.
+ *
+ * Getting that wrong ELIMINATES SOMEBODY. So the second reading is the default,
+ * and only a fixture list that accounts for every club in the league is trusted
+ * to mean the first. In the Premier League all 20 clubs play every matchday —
+ * a postponed game is still a fixture, with status 'postponed' — so a matchday
+ * missing anybody is a matchday still being loaded, not a short one.
+ *
+ * `teamCount` is the size of the league, not of the fixture list: the caller
+ * passes the teams table (db/verify-fixtures.sql asserts the same invariant at
+ * seed time, by hand; this is the runtime half of it).
+ */
+export function isMatchdayComplete(
+  fixtures: Fixture[],
+  matchday: number,
+  teamCount: number
+): boolean {
+  if (teamCount <= 0) return false;
+  return teamsPlayingIn(fixtures, matchday).size === teamCount;
+}
+
 // ---------------------------------------------------------------------------
 // Rule 1 — settling a single pick
 // ---------------------------------------------------------------------------
@@ -163,36 +193,104 @@ export function availableTeams(
 }
 
 // ---------------------------------------------------------------------------
-// Rule 3 — auto-assign on a missed pick (per entry)
+// Rule 3 — auto-assign on a missed pick (per entry), by seeded random draw
 // ---------------------------------------------------------------------------
+//
+// docs/LMS-RULES.md § Locking a round. A missed pick is not an elimination: the
+// entry is given a team AT RANDOM from the ones it has not used, preferring the
+// ones actually playing that matchday.
+//
+// SEEDED, NOT LIVE. The draw is a pure function of (entry, round), so:
+//
+//   * the same entry in the same round always draws the same team;
+//   * it makes no difference WHO presses Lock, WHEN, or how many times;
+//   * settlement's backstop, filling a blank in a round nobody locked, produces
+//     the IDENTICAL team the lock would have.
+//
+// That last property is what makes locking a convenience rather than something
+// the result depends on, and it is why this cannot use Math.random(): a live
+// draw would make "who pressed the button" part of the competition.
 
 /**
- * The team to auto-assign when an entry reaches the deadline with no pick:
- * the first ALPHABETICALLY that this entry has not used since its last reset
- * AND that is playing in this round's fixtures.
+ * xmur3 — a 32-bit string hash with a proper avalanche finaliser.
  *
- * Per entry by construction — it derives everything from the one entry's own
- * history, so two entries of the same person compute independently.
+ * The finaliser is the point, not the mixing loop. Entry ids are uuids that
+ * differ in one or two characters, and a weak hash maps near-identical strings
+ * to near-identical numbers — which, taken modulo a ten-team pool, would hand
+ * half the field the same team. Cheap, well-known, and no dependency.
+ */
+function hashSeed(seed: string): number {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  h = Math.imul(h ^ (h >>> 16), 2246822507);
+  h = Math.imul(h ^ (h >>> 13), 3266489909);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/**
+ * The seed for one entry's draw in one round.
  *
- * Returns null if nothing qualifies (an organiser decision, not an engine one).
+ * Built from the two ids and nothing else — both immutable, both known to every
+ * caller. NOT the round NUMBER or the matchday: those describe a round's
+ * position, and a competition that regenerated its rounds would silently
+ * re-draw everybody. Exported so the lock action and the settlement backstop
+ * cannot build it differently.
+ */
+export function autoAssignSeed(entryId: string, roundId: string): string {
+  return `${entryId}:${roundId}`;
+}
+
+/**
+ * Draw one team from a pool, deterministically.
+ *
+ * Sorted by id first, because the pool arrives in whatever order the caller's
+ * team list happened to be in — and an index into an unsorted list is a
+ * different team depending on who asked. Sorting by ID rather than name keeps it
+ * independent of locale as well.
+ */
+function drawTeam(pool: Team[], seed: string): Team | null {
+  if (pool.length === 0) return null;
+  const ordered = [...pool].sort((a, b) => a.id - b.id);
+  return ordered[hashSeed(seed) % ordered.length];
+}
+
+/**
+ * The team to assign when an entry reaches the deadline with no pick.
+ *
+ * Drawn at random — seeded by `seed`, see autoAssignSeed — from:
+ *
+ *   1. the teams this entry has not used since its last reset AND that are
+ *      playing this matchday; or, if that is empty,
+ *   2. the teams it has not used, PLAYING OR NOT.
+ *
+ * Case 2 is deliberate and is the whole of decision 1 in docs/LMS-RULES.md: an
+ * entry is NEVER skipped for having run out of playable teams. A team with no
+ * game cannot win, so that entry goes out when the round settles — which is the
+ * intended consequence of not sending a pick in, not a fault to refuse over.
+ *
+ * Per entry by construction: everything is derived from the one entry's own
+ * history and its own seed, so two entries of the same person draw separately.
+ *
+ * Returns null only when there is nothing to draw from at all — an empty team
+ * list. The 20-team pool reset means "used everything" cannot arise.
  */
 export function autoAssignTeam(
   pickHistory: TeamId[],
   allTeams: Team[],
   fixtures: Fixture[],
-  matchday: number
+  matchday: number,
+  seed: string
 ): Team | null {
+  const unused = availableTeams(pickHistory, allTeams);
+  if (unused.length === 0) return null;
+
   const playing = teamsPlayingIn(fixtures, matchday);
-  const candidates = availableTeams(pickHistory, allTeams)
-    .filter((team) => playing.has(team.id))
-    // Explicit "en" so the answer can't drift with the server's default locale,
-    // and id as a tie-break so equal-comparing names still order deterministically.
-    .sort(
-      (a, b) =>
-        a.name.localeCompare(b.name, "en", { sensitivity: "base" }) ||
-        a.id - b.id
-    );
-  return candidates[0] ?? null;
+  const playable = unused.filter((team) => playing.has(team.id));
+
+  return drawTeam(playable.length > 0 ? playable : unused, seed);
 }
 
 // ---------------------------------------------------------------------------
@@ -230,12 +328,46 @@ export function settleRound(
   entries: EntryRecord[],
   picks: PickRecord[],
   fixtures: Fixture[],
-  matchday: number
+  matchday: number,
+  /**
+   * Whether `fixtures` is known to hold EVERY club's game for this matchday —
+   * see isMatchdayComplete.
+   *
+   * Defaults to FALSE, and the default is the safety property: a caller that
+   * forgets this argument gets picks left `pending` and a settlement that
+   * refuses, never one that eliminates on a fixture list it could not vouch
+   * for. Opting in to the elimination has to be deliberate.
+   */
+  matchdayComplete: boolean = false
 ): RoundSettlement {
   const pickByEntry = new Map(picks.map((p) => [p.entry_id, p]));
   const outcomes: SettledOutcome[] = [];
   const unsettled: string[] = [];
   const survivedViaUnplayed = new Set<string>();
+
+  // Who is playing at all this matchday. Used for the one case a fixture cannot
+  // answer: a team with NO game.
+  //
+  // That only happens through the auto-assign fallback (docs/LMS-RULES.md
+  // decision 1) — an entry with no unused team playing this matchday is still
+  // given an unused team, and a team with no game cannot win, so the entry goes
+  // out. A manual pick can never get here: validatePick refuses a team that is
+  // not playing.
+  //
+  // Gated on the fixture list being COMPLETE, and that gate is load-bearing.
+  //
+  // "Any fixtures at all" is not enough, and this used to make that mistake. A
+  // half-loaded matchday — three of the ten games in the table — makes fourteen
+  // clubs look like they have no game, and every entry holding one of them
+  // would be eliminated on a fixture nobody had entered yet. Settlement is not
+  // reversible and the board is public.
+  //
+  // So the test is "does every club in the league have a game here?". If the
+  // answer is no, the list is still being loaded: picks stay `pending`, and
+  // settlement refuses with the same posture as a missing result. The one
+  // legitimate no-game case — the auto-assign fallback of
+  // docs/LMS-RULES.md decision 1 — only ever happens on a complete matchday,
+  // because that is the only kind the organiser can lock or settle.
 
   const settledEntries = entries.map((entry) => {
     if (entry.status !== "active") return entry;
@@ -247,7 +379,11 @@ export function settleRound(
     }
 
     const fixture = fixtureForTeam(fixtures, pick.team_id, matchday);
-    const outcome = settlePick(pick.team_id, fixture);
+    // No game, no win — but only where "no game" is a fact rather than a gap.
+    const outcome: PickOutcome =
+      !fixture && matchdayComplete
+        ? "eliminated"
+        : settlePick(pick.team_id, fixture);
     outcomes.push({
       entry_id: entry.id,
       team_id: pick.team_id,

@@ -26,6 +26,13 @@ export type RoundRow = {
   matchday: number;
   deadline: string;
   status: RoundStatus;
+  /**
+   * When the organiser locked this round and its blanks were auto-assigned.
+   * Null means never locked. Deliberately NOT part of `status` — see
+   * db/lock-round.sql for why locking and the settlement state machine are
+   * separate.
+   */
+  locked_at: string | null;
 };
 
 export type ParticipantRow = {
@@ -75,7 +82,7 @@ export type EntryWithParticipant = EntryRow & { participant: ParticipantRow };
 const COMPETITION_COLS =
   "id, label, status, rollover_count, pot_carried_in_pence, winner_participant_id, created_at";
 const ROUND_COLS =
-  "id, competition_id, round_number, matchday, deadline, status";
+  "id, competition_id, round_number, matchday, deadline, status, locked_at";
 const ENTRY_COLS =
   "id, competition_id, participant_id, paid, amount_paid_pence, is_newcomer, status, eliminated_round_id, joined_at";
 const BUYBACK_COLS =

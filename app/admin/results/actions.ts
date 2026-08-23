@@ -504,6 +504,12 @@ function settlementRefusal(
         ? `Can't settle yet — no result for ${named}. Every fixture a surviving entry picked has to be in first. Nothing has been changed.`
         : "Some picked fixtures still have no result — enter them first. Nothing has been changed.";
     }
+    case "impossible_survival":
+      // Cannot come from this action — the engine never claims a survival for a
+      // team with no game. It means the plan and the database disagree about
+      // the matchday's fixtures.
+      console.error("settlement claimed an impossible survival:", result);
+      return "Settlement was refused: it claimed a team survived a game that isn't in this matchday. Nothing has been changed — check the fixtures for this matchday are right.";
     case "incomplete_plan":
       return "Some picks still have no result — enter every fixture's result first. Nothing has been changed.";
     case "fixtures_changed":
