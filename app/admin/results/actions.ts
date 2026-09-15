@@ -21,6 +21,7 @@ import {
   getFixturesForMatchday,
   getParticipantNames,
   getPicksForCompetition,
+  getRound,
   getRounds,
   getTeams,
   isRoundOpen,
@@ -83,7 +84,7 @@ export async function setFixtureResult(
     }
     if (outcome?.code === "round_settled") {
       return {
-        error: `Round ${outcome.round_number} has already been settled — this result was applied to players and can't be changed here. Reopening a settled round is a deliberate re-settle, not an edit; it needs doing by hand for now.`,
+        error: `Round ${outcome.round_number} has already been settled — this result was applied to players and can't be changed while it stands. To correct it, reopen round ${outcome.round_number} (the button at the bottom of this page), fix the result, then settle the round again.`,
       };
     }
     console.error("setFixtureResult refused:", outcome);
@@ -468,6 +469,133 @@ export async function finaliseCompetition(): Promise<ActionState> {
   return {
     ok: `${winner} is the Last Man Standing — competition won with ${count} surviving ${count === 1 ? "entry" : "entries"}.`,
   };
+}
+
+/** What lms_reopen_round returns. See db/reopen-round.sql. */
+type ReopenResult = {
+  ok: boolean;
+  code: string;
+  round_number?: number;
+  revived?: number;
+  winners_reverted?: number;
+  outcomes_reset?: number;
+  competition_reverted_from?: "won" | "rolled_over" | null;
+  buybacks_on_round?: number;
+  detail?: {
+    round_number?: number;
+    status?: string;
+    later_round_number?: number;
+    later_status?: string;
+  } | null;
+};
+
+/**
+ * Reopen a settled round so a wrong result can be corrected and the round
+ * settled again — ONE Postgres transaction, via lms_reopen_round().
+ *
+ * THE OTHER HALF OF "SETTLEMENT IS ONE-WAY". lms_settle_round refuses a round
+ * that is already settled, and lms_set_fixture_result refuses to change a
+ * result on a settled matchday. Both are right: a settled round is a result
+ * people have been told. But a result typed in wrong and settled on used to be
+ * fixable only by hand-written SQL across four tables. This is that fix as a
+ * button: the function reverses exactly what settlement wrote — this round's
+ * eliminations revived, its pick outcomes back to pending, any winner and a
+ * won/rolled-over competition reverted — and puts the round back to 'locked',
+ * where the normal correct-the-result + Settle flow applies. Nothing about the
+ * rules is re-derived; re-settling is what decides the new outcome, through
+ * the engine, like any other week.
+ *
+ * ONLY THE LATEST SETTLED ROUND. A later round settled on this one's
+ * survivors; reviving anyone here would leave it describing a field that no
+ * longer exists. The function refuses ('not_latest') and names the later
+ * round. The page only offers the button for the round that qualifies
+ * (lib/reopen-round.ts), so this refusal is what a stale tab gets.
+ *
+ * The round id comes from the form, not from "the current round": the round
+ * being reopened is by definition not current, and the competition it belongs
+ * to may already be won — so this deliberately does not go through
+ * getActiveCompetition().
+ */
+export async function reopenRound(
+  _state: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  await requireAdmin();
+
+  const roundId = String(formData.get("round_id") ?? "").trim();
+  if (!roundId) return { error: "No round was named. Reload and try again." };
+
+  const round = await getRound(roundId);
+  if (!round) return { error: "That round no longer exists. Reload." };
+
+  const { data, error } = await supabaseServer.rpc("lms_reopen_round", {
+    p_round_id: roundId,
+  });
+
+  if (error) {
+    console.error("reopenRound RPC failed:", error);
+    return {
+      error:
+        "Reopening failed and nothing was changed — the whole thing is one transaction, so the round is exactly as it was. Try again.",
+    };
+  }
+
+  const result = data as ReopenResult | null;
+  if (!result) {
+    console.error("reopenRound returned no result");
+    return { error: "Reopening returned nothing. Nothing was changed." };
+  }
+
+  if (!result.ok) {
+    return { error: reopenRefusal(result, round.round_number) };
+  }
+
+  // Everything a reopen moves: the results page (the round is current again
+  // and its results editable), entrants (revived entries, pending outcomes),
+  // and the public standings.
+  revalidatePath("/admin/results");
+  revalidatePath("/admin/entrants");
+  revalidatePath("/leaderboard");
+
+  const n = result.round_number ?? round.round_number;
+  const revived = result.revived ?? 0;
+  const parts = [
+    `Round ${n} is reopened — ${revived} ${revived === 1 ? "entry" : "entries"} back in`,
+  ];
+  if (result.competition_reverted_from === "won") {
+    parts.push("the winner is un-crowned and the competition is active again");
+  } else if (result.competition_reverted_from === "rolled_over") {
+    parts.push("the rollover is undone and the competition is active again");
+  }
+  let message = `${parts.join(", ")}. Now correct the result in the fixtures above and settle round ${n} again.`;
+  if ((result.buybacks_on_round ?? 0) > 0) {
+    const b = result.buybacks_on_round ?? 0;
+    message += ` Note: ${b} buy-back ${b === 1 ? "was" : "were"} taken against this round's eliminations and ${b === 1 ? "has" : "have"} been left as ${b === 1 ? "it was" : "they were"} — if the corrected result keeps that entry in, the £10 is yours to refund.`;
+  }
+  return { ok: message };
+}
+
+/**
+ * Turn a refusal code from lms_reopen_round into something an organiser can
+ * act on. Every one of these means NOTHING was written.
+ */
+function reopenRefusal(result: ReopenResult, roundNumber: number): string {
+  const n = result.detail?.round_number ?? roundNumber;
+  switch (result.code) {
+    case "round_not_found":
+      return "That round no longer exists. Reload.";
+    case "not_settled":
+      return result.detail?.status === "locked"
+        ? `Round ${n} is already reopened — correct the result and settle it again.`
+        : `Round ${n} is not settled, so there is nothing to reopen.`;
+    case "not_latest":
+      return `Round ${n} is not the most recently settled round — round ${result.detail?.later_round_number ?? "?"} was ${result.detail?.later_status === "locked" ? "provisionally locked" : "settled"} after it, on round ${n}'s survivors. Only the most recent settled round can be reopened. To correct round ${n}, reopen the later rounds first, latest to earliest, then settle forward again.`;
+    case "another_competition_active":
+      return `Round ${n} concluded its competition, and another competition is already active. Reopening it would need two active competitions, which is not allowed. Nothing was changed.`;
+    default:
+      console.error("unexpected reopen refusal:", result);
+      return "Reopening was refused and nothing was changed. Reload and try again.";
+  }
 }
 
 /**

@@ -19,7 +19,8 @@ verification to run afterwards.
 - [ ] **The Supabase database is set up**, in this order, pasted into the SQL
       editor (see the README):
       `db/lms-schema.sql` → `db/seed-fixtures.sql` → `db/verify-fixtures.sql`
-      (every row `PASS`) → `db/settlement-fn.sql`.
+      (every row `PASS`) → `db/settlement-fn.sql` → `db/buyback.sql` →
+      `db/lock-round.sql` → `db/reopen-round.sql`.
       *(Verified on a fresh database: all four apply cleanly in that order,
       `verify-fixtures` gives 9 PASS / 0 FAIL, and re-running the schema leaves
       the 380 fixtures and 20 teams untouched.)*
@@ -33,6 +34,11 @@ verification to run afterwards.
       fixture a surviving entry picked is still without a result, so nobody can
       be crowned on a Sunday game that has not been played. All of these
       converge a database that predates the change and touch no data.
+- [ ] **Reopen-round deploy: run `db/reopen-round.sql` once.** It adds
+      `lms_reopen_round` behind the new "Reopen round" button on
+      `/admin/results`. Until it has been run, pressing the button fails
+      cleanly ("Reopening failed and nothing was changed") — nothing else is
+      affected. Re-runnable, touches no data.
 
 ## 2. Create the project
 

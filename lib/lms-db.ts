@@ -168,6 +168,17 @@ export async function getTeams(): Promise<Team[]> {
   return data ?? [];
 }
 
+/** One round by id, whatever competition it belongs to. Null if it is gone. */
+export async function getRound(roundId: string): Promise<RoundRow | null> {
+  const { data, error } = await supabaseServer
+    .from("rounds")
+    .select(ROUND_COLS)
+    .eq("id", roundId)
+    .maybeSingle<RoundRow>();
+  if (error) fail("round lookup failed", error.message);
+  return data ?? null;
+}
+
 export async function getRounds(competitionId: string): Promise<RoundRow[]> {
   const { data, error } = await supabaseServer
     .from("rounds")
