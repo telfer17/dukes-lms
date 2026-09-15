@@ -525,7 +525,13 @@ export async function reopenRound(
   const roundId = String(formData.get("round_id") ?? "").trim();
   if (!roundId) return { error: "No round was named. Reload and try again." };
 
-  const round = await getRound(roundId);
+  let round: Awaited<ReturnType<typeof getRound>>;
+  try {
+    round = await getRound(roundId);
+  } catch (e) {
+    console.error("reopenRound round lookup failed:", e);
+    return { error: "Could not read the round. Nothing was changed — try again." };
+  }
   if (!round) return { error: "That round no longer exists. Reload." };
 
   const { data, error } = await supabaseServer.rpc("lms_reopen_round", {
@@ -533,10 +539,13 @@ export async function reopenRound(
   });
 
   if (error) {
+    // A transport-level failure, not a refusal. The function is one
+    // transaction, so the database is either fully reopened or untouched — but
+    // from here there is no telling which: the call may have committed and the
+    // reply been lost. Say so, rather than promising a rollback we cannot see.
     console.error("reopenRound RPC failed:", error);
     return {
-      error:
-        "Reopening failed and nothing was changed — the whole thing is one transaction, so the round is exactly as it was. Try again.",
+      error: `Reopening round ${round.round_number} did not get a reply, so it is not known whether it went through. Reload this page to see the round's actual state before trying again.`,
     };
   }
 

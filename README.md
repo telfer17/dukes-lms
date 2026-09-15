@@ -160,8 +160,10 @@ pending, any winner and a won/rolled-over competition reverted — and puts the
 round back to `locked`, atomically, under the same lock. Then correct the result
 and press Settle as normal. Fixture results, picks (auto-assigned ones
 included), buy-backs and every other round are untouched. **Only the most
-recently settled round can be reopened**: a later round settled on this one's
-survivors, so the function refuses and names it. To fix an older round, reopen
+recently settled round can be reopened**: the function refuses, and names the
+blocker, if any later round has a status other than `pending` — `settled`, or
+`locked` (the provisional-win lock, which has already applied its eliminations).
+Either was computed on this round's survivors. To fix an older round, reopen
 from the latest backwards and settle forward again.
 
 **One lock across every write path.** `lms_settle_round` and

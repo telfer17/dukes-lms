@@ -158,10 +158,13 @@ describe("reopenRound", () => {
     expect(error).toMatch(/Nothing was changed/);
   });
 
-  it("reports a transport failure as nothing changed", async () => {
+  it("reports a transport failure as an UNKNOWN outcome and says to reload first", async () => {
+    // The RPC is one transaction, but a lost reply cannot tell us whether it
+    // committed. The action must not claim a rollback it cannot see.
     h.rpc.mockResolvedValue({ data: null, error: { message: "boom" } });
-    expect(errorOf(await reopenRound(null, form("r2")))).toMatch(
-      /nothing was changed .* one transaction/
-    );
+    const error = errorOf(await reopenRound(null, form("r2")));
+    expect(error).toMatch(/not known whether it went through/);
+    expect(error).toMatch(/Reload this page/);
+    expect(error).not.toMatch(/nothing was changed/i);
   });
 });
