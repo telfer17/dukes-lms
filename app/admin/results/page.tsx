@@ -10,8 +10,10 @@ import {
   currentRound,
   getActiveCompetition,
   getBuybacks,
+  getConcludedCompetitions,
   getEntries,
   getFixturesForMatchday,
+  getParticipantNames,
   getPicksForRound,
   getRounds,
   getTeams,
@@ -23,11 +25,12 @@ import {
   type RoundRow,
 } from "@/lib/lms-db";
 import type { Team } from "@/lib/lms";
+import { reopenableRound } from "@/lib/reopen-round";
 import {
   buildFinalisationPlan,
   type FinalisationOutcome,
 } from "@/lib/settlement-plan";
-import { finaliseCompetition, settleCurrentRound } from "./actions";
+import { finaliseCompetition, reopenRound, settleCurrentRound } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -64,12 +67,37 @@ export default async function ResultsPage() {
   // a buy-back window, or ready to be closed off. Null until it is worked out.
   let finalisation: FinalisationOutcome | null = null;
   let pendingNames: string[] = [];
+  // The one round that can be REOPENED — the latest settled round — and the
+  // competition it belongs to. That competition is the active one while there
+  // is one; otherwise the newest concluded one, because "the round that crowned
+  // the wrong winner" is exactly the case reopening exists for, and a won
+  // competition is no longer active. See lib/reopen-round.ts for the rule.
+  let reopenable: RoundRow | null = null;
+  let reopenOf: CompetitionRow | null = null;
+  let reopenWinnerName: string | null = null;
 
   try {
     competition = await getActiveCompetition();
     if (competition) {
       rounds = await getRounds(competition.id);
       round = currentRound(rounds);
+      reopenable = reopenableRound(rounds);
+      reopenOf = reopenable ? competition : null;
+    } else {
+      const [concluded] = await getConcludedCompetitions(1);
+      if (concluded) {
+        const concludedRounds = await getRounds(concluded.id);
+        reopenable = reopenableRound(concludedRounds);
+        reopenOf = reopenable ? concluded : null;
+        if (reopenOf?.winner_participant_id) {
+          reopenWinnerName =
+            (await getParticipantNames([reopenOf.winner_participant_id])).get(
+              reopenOf.winner_participant_id
+            ) ?? null;
+        }
+      }
+    }
+    if (competition) {
       teams = await getTeams();
       const entries = await getEntries(competition.id);
       activeCount = entries.filter((e) => e.status === "active").length;
@@ -344,6 +372,48 @@ export default async function ResultsPage() {
             </>
           )}
         </>
+      )}
+
+      {reopenable && reopenOf && (
+        <section className="mt-8 rounded-md border border-red-200 p-5">
+          <h2 className="font-semibold">
+            {reopenOf.status === "active"
+              ? `Round ${reopenable.round_number} is settled`
+              : `${reopenOf.label} has finished — round ${reopenable.round_number} was its last settled round`}
+          </h2>
+          <p className="mt-1 mb-4 text-sm text-gray-600">
+            {reopenOf.status === "won" && (
+              <span className="block">
+                {reopenWinnerName ?? "The winner"} was crowned on it.
+              </span>
+            )}
+            {reopenOf.status === "rolled_over" && (
+              <span className="block">The competition rolled over on it.</span>
+            )}
+            If a result in round {reopenable.round_number} was entered wrong,
+            reopen it: the eliminations it made
+            {reopenOf.status === "won"
+              ? " and the win"
+              : reopenOf.status === "rolled_over"
+                ? " and the rollover"
+                : ""}{" "}
+            are undone, the round goes back to locked, and you correct the
+            result and settle it again — through the normal Settle button.
+            Picks are untouched, including any that were auto-assigned.
+            <strong className="block">
+              Only the most recent settled round can be reopened.
+            </strong>
+          </p>
+          <ActionForm
+            action={reopenRound}
+            submitLabel={`Reopen round ${reopenable.round_number}…`}
+            pendingLabel="Reopening…"
+            destructive
+            confirm={`This reverses the settlement of round ${reopenable.round_number} — eliminations and any winner are undone so you can correct a result and settle again. Only the most recent settled round can be reopened.\n\nReopen round ${reopenable.round_number}?`}
+          >
+            <input type="hidden" name="round_id" value={reopenable.id} />
+          </ActionForm>
+        </section>
       )}
     </main>
   );

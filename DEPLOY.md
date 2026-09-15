@@ -19,10 +19,13 @@ verification to run afterwards.
 - [ ] **The Supabase database is set up**, in this order, pasted into the SQL
       editor (see the README):
       `db/lms-schema.sql` → `db/seed-fixtures.sql` → `db/verify-fixtures.sql`
-      (every row `PASS`) → `db/settlement-fn.sql`.
-      *(Verified on a fresh database: all four apply cleanly in that order,
-      `verify-fixtures` gives 9 PASS / 0 FAIL, and re-running the schema leaves
-      the 380 fixtures and 20 teams untouched.)*
+      (every row `PASS`) → `db/settlement-fn.sql` → `db/buyback.sql` →
+      `db/lock-round.sql` → `db/reopen-round.sql`.
+      *(Verified on a fresh database: the first four apply cleanly in that
+      order, `verify-fixtures` gives 9 PASS / 0 FAIL, and re-running the schema
+      leaves the 380 fixtures and 20 teams untouched. The three function files
+      after them are applied in that same order by the integration suite,
+      `tests/db/harness.ts`, on every run.)*
 - [ ] **If you already ran the SQL before this deploy, run `db/lms-schema.sql`
       and `db/settlement-fn.sql` again.** Two things changed since: the launch
       review removed `entries.id` from the public `standing_board` view (that
@@ -33,6 +36,15 @@ verification to run afterwards.
       fixture a surviving entry picked is still without a result, so nobody can
       be crowned on a Sunday game that has not been played. All of these
       converge a database that predates the change and touch no data.
+      **Order matters on an existing database:** run `db/buyback.sql` and
+      `db/lock-round.sql` BEFORE re-running `db/settlement-fn.sql` (it refers to
+      the buy-back end kind and the lock semantics they define), and
+      `db/reopen-round.sql` last.
+- [ ] **Reopen-round deploy: run `db/reopen-round.sql` once, after all of the
+      above.** It adds `lms_reopen_round` behind the new "Reopen round" button
+      on `/admin/results`. Until it has been run, pressing the button fails
+      cleanly (the action reports it got no reply and asks for a reload) —
+      nothing else is affected. Re-runnable, touches no data.
 
 ## 2. Create the project
 

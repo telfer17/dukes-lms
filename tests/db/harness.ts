@@ -119,9 +119,9 @@ export class TestDb {
   }
 
   /**
-   * Apply db/lms-schema.sql and db/settlement-fn.sql. Both are re-runnable, so
-   * this is safe on an already-set-up database and the suite never has to know
-   * which it got.
+   * Apply every file in db/ that defines schema or functions, in the order the
+   * README gives. All are re-runnable, so this is safe on an already-set-up
+   * database and the suite never has to know which it got.
    *
    * The roles come first because the schema REVOKEs from anon/authenticated and
    * the functions GRANT to service_role — on Supabase those exist already, on a
@@ -145,6 +145,7 @@ export class TestDb {
     );
     await this.sql(readFileSync(join(repoRoot, "db", "buyback.sql"), "utf8"));
     await this.sql(readFileSync(join(repoRoot, "db", "lock-round.sql"), "utf8"));
+    await this.sql(readFileSync(join(repoRoot, "db", "reopen-round.sql"), "utf8"));
   }
 
   /** Wipe everything except the 20-team reference seed. */
@@ -278,6 +279,10 @@ export class TestDb {
     return this.value("select lms_lock_round($1::jsonb) as r", [
       JSON.stringify(plan),
     ]);
+  }
+
+  async reopen(roundId: string): Promise<Record<string, unknown>> {
+    return this.value("select lms_reopen_round($1) as r", [roundId]);
   }
 
   async roundRow(roundId: string): Promise<Row> {

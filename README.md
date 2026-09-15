@@ -93,6 +93,9 @@ Supabase SQL editor **in this order**, and every file is re-runnable:
 | 2   | `db/seed-fixtures.sql`   | The 380 Premier League fixtures. Additive, insert-only, safe to re-run                 |
 | 3   | `db/verify-fixtures.sql` | Read-only check. **Every row must say `PASS`**                                         |
 | 4   | `db/settlement-fn.sql`   | `lms_lock_key`, `lms_settle_round`, `lms_set_fixture_result`                           |
+| 5   | `db/buyback.sql`         | The `buybacks` table, `lms_buy_back_entry`, `lms_finalise_competition`                 |
+| 6   | `db/lock-round.sql`      | `rounds.locked_at`, `lms_lock_round`                                                   |
+| 7   | `db/reopen-round.sql`    | `lms_reopen_round` — reverse a settled round so a wrong result can be corrected        |
 
 Order matters: the seed needs the schema's `teams` rows to resolve club names,
 and the settlement functions reference schema objects. Run step 3 and read the
@@ -146,6 +149,22 @@ the functions. The shape is **plan → validate → apply**:
    failed. The organiser re-runs and a fresh plan is built.
 
 There is no half-applied settlement to recover from.
+
+**Correcting a settled round.** Settlement is one-way: `lms_settle_round`
+refuses a settled round and `lms_set_fixture_result` refuses to change a result
+on a settled matchday. If a result was entered wrong and the round settled on
+it, the fix is the **Reopen round** button at the bottom of `/admin/results`
+(`lms_reopen_round`, `db/reopen-round.sql`). It reverses exactly what that
+round's settlement wrote — its eliminations revived, its pick outcomes back to
+pending, any winner and a won/rolled-over competition reverted — and puts the
+round back to `locked`, atomically, under the same lock. Then correct the result
+and press Settle as normal. Fixture results, picks (auto-assigned ones
+included), buy-backs and every other round are untouched. **Only the most
+recently settled round can be reopened**: the function refuses, and names the
+blocker, if any later round has a status other than `pending` — `settled`, or
+`locked` (the provisional-win lock, which has already applied its eliminations).
+Either was computed on this round's survivors. To fix an older round, reopen
+from the latest backwards and settle forward again.
 
 **One lock across every write path.** `lms_settle_round` and
 `lms_set_fixture_result` (the manual result editor) both take the same
