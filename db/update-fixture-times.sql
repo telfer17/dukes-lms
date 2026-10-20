@@ -5,7 +5,7 @@
 -- GENERATED FILE — do not edit by hand.
 --   source:    https://raw.githubusercontent.com/openfootball/england/master/2026-27/1-premierleague.txt
 --   format:    Football.TXT (openfootball/england)
---   fetched:   2026-08-29
+--   fetched:   2026-09-19
 --   generator: scripts/update-fixture-times.mjs
 --
 -- The August seed carried placeholder "Saturday 15:00" kickoffs for every game
@@ -81,11 +81,11 @@ from (
     (5, '2026-09-19T11:30:00.000Z', 'Tottenham Hotspur', 'Aston Villa'),
     (5, '2026-09-19T14:00:00.000Z', 'Brighton & Hove Albion', 'Arsenal'),
     (5, '2026-09-19T14:00:00.000Z', 'Everton', 'Ipswich Town'),
-    (5, '2026-09-19T14:00:00.000Z', 'Leeds United', 'Crystal Palace'),
-    (5, '2026-09-19T14:00:00.000Z', 'Manchester City', 'Sunderland'),
     (5, '2026-09-19T14:00:00.000Z', 'Newcastle United', 'Hull City'),
     (5, '2026-09-19T16:30:00.000Z', 'Nottingham Forest', 'Coventry City'),
     (5, '2026-09-20T13:00:00.000Z', 'Bournemouth', 'Liverpool'),
+    (5, '2026-09-20T13:00:00.000Z', 'Leeds United', 'Crystal Palace'),
+    (5, '2026-09-20T13:00:00.000Z', 'Manchester City', 'Sunderland'),
     (5, '2026-09-20T15:30:00.000Z', 'Fulham', 'Manchester United'),
     (6, '2026-10-10T11:30:00.000Z', 'Arsenal', 'Leeds United'),
     (6, '2026-10-10T14:00:00.000Z', 'Aston Villa', 'Brentford'),
@@ -111,10 +111,10 @@ from (
     (8, '2026-10-24T11:30:00.000Z', 'Aston Villa', 'Manchester City'),
     (8, '2026-10-24T14:00:00.000Z', 'Arsenal', 'Everton'),
     (8, '2026-10-24T14:00:00.000Z', 'Coventry City', 'Fulham'),
-    (8, '2026-10-24T14:00:00.000Z', 'Liverpool', 'Brighton & Hove Albion'),
     (8, '2026-10-24T16:30:00.000Z', 'Chelsea', 'Tottenham Hotspur'),
     (8, '2026-10-25T14:00:00.000Z', 'Crystal Palace', 'Newcastle United'),
     (8, '2026-10-25T14:00:00.000Z', 'Hull City', 'Brentford'),
+    (8, '2026-10-25T14:00:00.000Z', 'Liverpool', 'Brighton & Hove Albion'),
     (8, '2026-10-25T14:00:00.000Z', 'Manchester United', 'Bournemouth'),
     (8, '2026-10-25T16:30:00.000Z', 'Sunderland', 'Leeds United'),
     (9, '2026-10-31T12:30:00.000Z', 'Chelsea', 'Manchester United'),
@@ -124,7 +124,7 @@ from (
     (9, '2026-10-31T15:00:00.000Z', 'Hull City', 'Ipswich Town'),
     (9, '2026-10-31T15:00:00.000Z', 'Manchester City', 'Brighton & Hove Albion'),
     (9, '2026-10-31T17:30:00.000Z', 'Tottenham Hotspur', 'Crystal Palace'),
-    (9, '2026-11-01T14:00:00.000Z', 'Aston Villa', 'Fulham'),
+    (9, '2026-10-31T20:00:00.000Z', 'Aston Villa', 'Fulham'),
     (9, '2026-11-01T16:30:00.000Z', 'Liverpool', 'Arsenal'),
     (9, '2026-11-02T20:00:00.000Z', 'Newcastle United', 'Everton'),
     (10, '2026-11-07T15:00:00.000Z', 'Arsenal', 'Hull City'),
@@ -197,46 +197,46 @@ from (
     (16, '2026-12-19T15:00:00.000Z', 'Manchester City', 'Hull City'),
     (16, '2026-12-19T15:00:00.000Z', 'Nottingham Forest', 'Everton'),
     (16, '2026-12-19T15:00:00.000Z', 'Sunderland', 'Crystal Palace'),
-    (17, '2026-12-26T15:00:00.000Z', 'Aston Villa', 'Leeds United'),
-    (17, '2026-12-26T15:00:00.000Z', 'Coventry City', 'Chelsea'),
-    (17, '2026-12-26T15:00:00.000Z', 'Crystal Palace', 'Arsenal'),
+    (17, '2026-12-26T12:30:00.000Z', 'Aston Villa', 'Leeds United'),
     (17, '2026-12-26T15:00:00.000Z', 'Everton', 'Sunderland'),
     (17, '2026-12-26T15:00:00.000Z', 'Fulham', 'Brighton & Hove Albion'),
-    (17, '2026-12-26T15:00:00.000Z', 'Hull City', 'Liverpool'),
     (17, '2026-12-26T15:00:00.000Z', 'Ipswich Town', 'Brentford'),
-    (17, '2026-12-26T15:00:00.000Z', 'Manchester United', 'Nottingham Forest'),
-    (17, '2026-12-26T15:00:00.000Z', 'Newcastle United', 'Manchester City'),
     (17, '2026-12-26T15:00:00.000Z', 'Tottenham Hotspur', 'Bournemouth'),
-    (18, '2026-12-30T20:00:00.000Z', 'Aston Villa', 'Liverpool'),
-    (18, '2026-12-30T20:00:00.000Z', 'Coventry City', 'Brentford'),
-    (18, '2026-12-30T20:00:00.000Z', 'Crystal Palace', 'Bournemouth'),
-    (18, '2026-12-30T20:00:00.000Z', 'Everton', 'Manchester City'),
-    (18, '2026-12-30T20:00:00.000Z', 'Fulham', 'Arsenal'),
-    (18, '2026-12-30T20:00:00.000Z', 'Hull City', 'Leeds United'),
-    (18, '2026-12-30T20:00:00.000Z', 'Ipswich Town', 'Chelsea'),
-    (18, '2026-12-30T20:00:00.000Z', 'Manchester United', 'Sunderland'),
-    (18, '2026-12-30T20:00:00.000Z', 'Newcastle United', 'Nottingham Forest'),
-    (18, '2026-12-30T20:00:00.000Z', 'Tottenham Hotspur', 'Brighton & Hove Albion'),
+    (17, '2026-12-26T17:30:00.000Z', 'Hull City', 'Liverpool'),
+    (17, '2026-12-26T20:00:00.000Z', 'Newcastle United', 'Manchester City'),
+    (17, '2026-12-27T14:00:00.000Z', 'Coventry City', 'Chelsea'),
+    (17, '2026-12-27T16:30:00.000Z', 'Manchester United', 'Nottingham Forest'),
+    (17, '2026-12-27T19:00:00.000Z', 'Crystal Palace', 'Arsenal'),
+    (18, '2026-12-29T19:30:00.000Z', 'Hull City', 'Leeds United'),
+    (18, '2026-12-29T19:30:00.000Z', 'Tottenham Hotspur', 'Brighton & Hove Albion'),
+    (18, '2026-12-29T20:15:00.000Z', 'Everton', 'Manchester City'),
+    (18, '2026-12-30T19:30:00.000Z', 'Coventry City', 'Brentford'),
+    (18, '2026-12-30T19:30:00.000Z', 'Crystal Palace', 'Bournemouth'),
+    (18, '2026-12-30T19:30:00.000Z', 'Fulham', 'Arsenal'),
+    (18, '2026-12-30T19:30:00.000Z', 'Manchester United', 'Sunderland'),
+    (18, '2026-12-30T19:30:00.000Z', 'Newcastle United', 'Nottingham Forest'),
+    (18, '2026-12-30T20:15:00.000Z', 'Aston Villa', 'Liverpool'),
+    (18, '2026-12-30T20:15:00.000Z', 'Ipswich Town', 'Chelsea'),
+    (19, '2027-01-01T20:00:00.000Z', 'Leeds United', 'Everton'),
+    (19, '2027-01-02T12:30:00.000Z', 'Brighton & Hove Albion', 'Manchester United'),
     (19, '2027-01-02T15:00:00.000Z', 'Arsenal', 'Ipswich Town'),
-    (19, '2027-01-02T15:00:00.000Z', 'Bournemouth', 'Aston Villa'),
     (19, '2027-01-02T15:00:00.000Z', 'Brentford', 'Crystal Palace'),
-    (19, '2027-01-02T15:00:00.000Z', 'Brighton & Hove Albion', 'Manchester United'),
-    (19, '2027-01-02T15:00:00.000Z', 'Chelsea', 'Newcastle United'),
-    (19, '2027-01-02T15:00:00.000Z', 'Leeds United', 'Everton'),
     (19, '2027-01-02T15:00:00.000Z', 'Liverpool', 'Coventry City'),
-    (19, '2027-01-02T15:00:00.000Z', 'Manchester City', 'Tottenham Hotspur'),
     (19, '2027-01-02T15:00:00.000Z', 'Nottingham Forest', 'Fulham'),
     (19, '2027-01-02T15:00:00.000Z', 'Sunderland', 'Hull City'),
-    (20, '2027-01-06T20:00:00.000Z', 'Arsenal', 'Brentford'),
-    (20, '2027-01-06T20:00:00.000Z', 'Brighton & Hove Albion', 'Bournemouth'),
-    (20, '2027-01-06T20:00:00.000Z', 'Crystal Palace', 'Chelsea'),
-    (20, '2027-01-06T20:00:00.000Z', 'Everton', 'Aston Villa'),
-    (20, '2027-01-06T20:00:00.000Z', 'Fulham', 'Tottenham Hotspur'),
-    (20, '2027-01-06T20:00:00.000Z', 'Ipswich Town', 'Coventry City'),
-    (20, '2027-01-06T20:00:00.000Z', 'Leeds United', 'Manchester City'),
-    (20, '2027-01-06T20:00:00.000Z', 'Manchester United', 'Newcastle United'),
-    (20, '2027-01-06T20:00:00.000Z', 'Nottingham Forest', 'Hull City'),
-    (20, '2027-01-06T20:00:00.000Z', 'Sunderland', 'Liverpool'),
+    (19, '2027-01-02T17:30:00.000Z', 'Bournemouth', 'Aston Villa'),
+    (19, '2027-01-03T14:00:00.000Z', 'Chelsea', 'Newcastle United'),
+    (19, '2027-01-03T16:30:00.000Z', 'Manchester City', 'Tottenham Hotspur'),
+    (20, '2027-01-05T19:30:00.000Z', 'Arsenal', 'Brentford'),
+    (20, '2027-01-05T19:30:00.000Z', 'Brighton & Hove Albion', 'Bournemouth'),
+    (20, '2027-01-05T19:30:00.000Z', 'Everton', 'Aston Villa'),
+    (20, '2027-01-05T19:30:00.000Z', 'Nottingham Forest', 'Hull City'),
+    (20, '2027-01-05T20:15:00.000Z', 'Sunderland', 'Liverpool'),
+    (20, '2027-01-06T19:30:00.000Z', 'Crystal Palace', 'Chelsea'),
+    (20, '2027-01-06T19:30:00.000Z', 'Fulham', 'Tottenham Hotspur'),
+    (20, '2027-01-06T19:30:00.000Z', 'Ipswich Town', 'Coventry City'),
+    (20, '2027-01-06T20:15:00.000Z', 'Leeds United', 'Manchester City'),
+    (20, '2027-01-07T20:00:00.000Z', 'Manchester United', 'Newcastle United'),
     (21, '2027-01-16T15:00:00.000Z', 'Aston Villa', 'Manchester United'),
     (21, '2027-01-16T15:00:00.000Z', 'Bournemouth', 'Ipswich Town'),
     (21, '2027-01-16T15:00:00.000Z', 'Brentford', 'Brighton & Hove Albion'),
@@ -433,10 +433,6 @@ where f.matchday = v.matchday
 -- record that has already been acted on, and nothing reads it any more.
 -- A deadline the organiser has already corrected by hand to the true first
 -- kickoff simply matches the derived value and is not rewritten.
---
--- KEPT BY ORGANISER DECISION: round 2 of the active competition is
--- excluded below — its deadline stays exactly as manually set, whatever the
--- fixtures say. (Generated with --keep-round.)
 
 update rounds r
 set deadline = md.first_kickoff
@@ -447,15 +443,12 @@ from (
 ) as md
 where r.matchday = md.matchday
   and r.status <> 'settled'
-  and r.deadline is distinct from md.first_kickoff
-  and not (r.round_number in (2)
-           and r.competition_id in (select id from competitions where status = 'active'));
+  and r.deadline is distinct from md.first_kickoff;
 
 
 -- 3 ── verify ----------------------------------------------------------------
 --
--- Every unsettled round's deadline now equals its matchday's first kickoff
--- (kept rounds excluded — their deadline differs by organiser decision).
+-- Every unsettled round's deadline now equals its matchday's first kickoff.
 -- MUST RETURN 0 ROWS.
 
 select r.round_number, r.matchday, r.deadline, md.first_kickoff
@@ -466,6 +459,4 @@ join (
   group by matchday
 ) as md on md.matchday = r.matchday
 where r.status <> 'settled'
-  and r.deadline is distinct from md.first_kickoff
-  and not (r.round_number in (2)
-           and r.competition_id in (select id from competitions where status = 'active'));
+  and r.deadline is distinct from md.first_kickoff;

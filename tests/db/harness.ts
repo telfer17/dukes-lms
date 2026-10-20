@@ -146,6 +146,7 @@ export class TestDb {
     await this.sql(readFileSync(join(repoRoot, "db", "buyback.sql"), "utf8"));
     await this.sql(readFileSync(join(repoRoot, "db", "lock-round.sql"), "utf8"));
     await this.sql(readFileSync(join(repoRoot, "db", "reopen-round.sql"), "utf8"));
+    await this.sql(readFileSync(join(repoRoot, "db", "grants.sql"), "utf8"));
   }
 
   /** Wipe everything except the 20-team reference seed. */

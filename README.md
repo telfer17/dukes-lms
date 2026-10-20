@@ -72,7 +72,7 @@ production. `.env.example` is the annotated template; never commit real values.
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `NEXT_PUBLIC_SUPABASE_URL`             | Supabase project URL. `NEXT_PUBLIC_` — treat as public                                                                             |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Anon key for public reads. `NEXT_PUBLIC_` — treat as public                                                                        |
-| `SUPABASE_SECRET_KEY`                  | Server-only key. Bypasses grants — never expose it                                                                                 |
+| `SUPABASE_SECRET_KEY`                  | Server-only key, runs as `service_role`. Bypasses RLS, not grants (see `db/grants.sql`) — never expose it |
 | `ADMIN_PASSWORD`                       | Password for `/admin`. The cookie stores its SHA-256, not the password                                                             |
 | `NEXT_PUBLIC_SITE_URL`                 | Optional. Absolute base for the share card; only needed once there's a custom domain (Vercel's own URL is picked up automatically) |
 
@@ -96,6 +96,7 @@ Supabase SQL editor **in this order**, and every file is re-runnable:
 | 5   | `db/buyback.sql`         | The `buybacks` table, `lms_buy_back_entry`, `lms_finalise_competition`                 |
 | 6   | `db/lock-round.sql`      | `rounds.locked_at`, `lms_lock_round`                                                   |
 | 7   | `db/reopen-round.sql`    | `lms_reopen_round` — reverse a settled round so a wrong result can be corrected        |
+| 8   | `db/grants.sql`          | Explicit Data API grants: least-privilege `service_role` per table, anon read-only on public-safe objects. Needed from 2026-10-30 |
 
 Order matters: the seed needs the schema's `teams` rows to resolve club names,
 and the settlement functions reference schema objects. Run step 3 and read the
