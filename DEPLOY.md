@@ -20,7 +20,7 @@ verification to run afterwards.
       editor (see the README):
       `db/lms-schema.sql` → `db/seed-fixtures.sql` → `db/verify-fixtures.sql`
       (every row `PASS`) → `db/settlement-fn.sql` → `db/buyback.sql` →
-      `db/lock-round.sql` → `db/reopen-round.sql`.
+      `db/lock-round.sql` → `db/reopen-round.sql` → `db/grants.sql`.
       *(Verified on a fresh database: the first four apply cleanly in that
       order, `verify-fixtures` gives 9 PASS / 0 FAIL, and re-running the schema
       leaves the 380 fixtures and 20 teams untouched. The three function files
@@ -45,6 +45,14 @@ verification to run afterwards.
       on `/admin/results`. Until it has been run, pressing the button fails
       cleanly (the action reports it got no reply and asks for a reload) —
       nothing else is affected. Re-runnable, touches no data.
+- [ ] **Grants deploy: run `db/grants.sql` last, on new AND existing databases.**
+      From 2026-10-30 Supabase stops auto-granting Data API privileges to new
+      public tables, and nothing in `db/` ever granted `service_role` (the
+      secret key) anything on a table — it has been living on those defaults.
+      The file makes the grants explicit and sets a `service_role`-only default
+      for future tables. On the live database it is purely additive: every
+      grant it makes is already held, so it changes nothing that works today.
+      Re-runnable, touches privileges only, never data.
 
 ## 2. Create the project
 

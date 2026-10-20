@@ -474,7 +474,11 @@ comment on view standing_board is
 -- With RLS off, Supabase's default grants would let the publishable (anon) key
 -- read every column of every table, including phone numbers and payment
 -- amounts. These REVOKEs close that off. All privileged access goes through
--- the server-side secret key (lib/supabase-server.ts), which bypasses grants.
+-- the server-side secret key (lib/supabase-server.ts), which runs as
+-- service_role. That role bypasses RLS, NOT privileges: it reads and writes
+-- these tables only because Supabase default-granted it the privileges when
+-- each table was created — an auto-grant Supabase withdraws for new tables
+-- from 2026-10-30. db/grants.sql makes those grants explicit; run it last.
 --
 -- Public (publishable key)  : teams, fixtures, rounds, competitions, standing_board
 -- Secret key only           : participants, entries, picks
