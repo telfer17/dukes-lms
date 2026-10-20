@@ -124,10 +124,23 @@ revoke all on buybacks     from anon, authenticated;
 --
 -- Default privileges apply to objects created by the role that runs this
 -- statement. In the Supabase SQL editor that is postgres, which is also the
--- role every db/ file runs as — so the net covers them.
+-- role every db/ file runs as and the owner of every table this project
+-- creates — so the net covers them.
 
 alter default privileges in schema public
   grant select, insert, update, delete on tables to service_role;
+
+-- And the legacy default comes OFF at the source. A project created before
+-- 2026-10-30 still carries Supabase's original default privileges, which
+-- hand anon and authenticated ALL on every NEW table and view in public —
+-- standing_board included, each time db/lms-schema.sql drops and recreates
+-- it. Section 3 cleans that up after the fact, but only for objects it names;
+-- this stops it happening at all. From here on an explicit select grant in
+-- section 3 is the ONLY way the publishable key gets at anything. (Postgres
+-- treats views as tables for default privileges, so the view is covered.)
+
+alter default privileges in schema public
+  revoke all on tables from anon, authenticated;
 
 
 -- 5 ── verify ----------------------------------------------------------------

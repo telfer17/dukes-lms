@@ -94,4 +94,47 @@ suite(hasDatabase ? "grants (integration)" : SKIP_NOTICE, () => {
     await db.applySchema();
     expectReadOnly(await publicPrivileges());
   });
+
+  it("stops Supabase's legacy default privileges reaching tables created later", async () => {
+    // A project created before 2026-10-30 carries default privileges that
+    // hand anon and authenticated ALL on every NEW table and view in public.
+    // Reproduce that, apply the files, then create a table AFTER them: the
+    // publishable key must get nothing, the secret key its safety-net verbs.
+    await db.sql(`
+      alter default privileges in schema public
+        grant all on tables to anon, authenticated
+    `);
+    await db.applySchema();
+
+    await db.sql("drop table if exists grants_probe");
+    await db.sql("create table grants_probe (id int primary key)");
+    try {
+      const rows = await db.sql(
+        `select grantee,
+                array_agg(privilege_type::text order by privilege_type)::text[] as privileges
+         from information_schema.role_table_grants
+         where table_schema = 'public' and table_name = 'grants_probe'
+         group by grantee`
+      );
+      const byRole = Object.fromEntries(
+        rows.map((r) => [r.grantee as string, r.privileges as string[]])
+      );
+      expect(byRole.anon, "anon on a new table").toBeUndefined();
+      expect(byRole.authenticated, "authenticated on a new table").toBeUndefined();
+      expect(byRole.service_role, "service_role on a new table").toEqual([
+        "DELETE",
+        "INSERT",
+        "SELECT",
+        "UPDATE",
+      ]);
+    } finally {
+      await db.sql("drop table if exists grants_probe");
+    }
+
+    // The view the schema file recreates on every run must come out read-only
+    // too — it was recreated under the legacy default just now.
+    const privs = await publicPrivileges();
+    expect(privs.anon.standing_board).toEqual(["SELECT"]);
+    expect(privs.authenticated.standing_board).toEqual(["SELECT"]);
+  });
 });
